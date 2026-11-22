@@ -1182,10 +1182,15 @@ class Engine:
         if track is not None:
             self.ctx.current = track
             self.ctx.last_tracks = [track]
-        self.save_session(force=True)
+        # the queue that really plays now, not the one the record remembers:
+        # a stale index/count would otherwise make the answer claim an entry
+        # that does not exist ("entry 10 of 10" in a 6-entry queue)
+        live = self.save_session(force=True) or {}
         text = f"▶ Continuing **{_escape(session.describe(data))}**"
-        if index > 0 and int(data.get("count") or 0) > 1:
-            text += (f"\n\nentry {index + 1} of {int(data['count'])}")
+        count = int(live.get("count") or data.get("count") or 0)
+        shown = int(live.get("index") or 0) if live else index
+        if 0 < shown < count:
+            text += (f"\n\nentry {shown + 1} of {count}")
         if message:
             text += f"\n\n_{message}_"
         return Reply(text, tracks=[track] if track is not None else [],

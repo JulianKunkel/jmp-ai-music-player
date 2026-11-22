@@ -715,16 +715,20 @@ def check_session(engine, root: Path) -> None:
                             "rel": track, "position": 0, "duration": 180,
                             "index": 9, "count": 10,
                             "artist": "Eisenwerk", "title": "Track 2"})
-        fake = FakePlayer({"idle": False, "file": "", "playlist_count": 1,
-                           "playlist_pos": 0, "time": 0, "duration": 0})
+        fake = FakePlayer({"idle": False, "file": str(root / track),
+                           "playlist_count": 1, "playlist_pos": 0,
+                           "time": 0, "duration": 0})
         engine.player = fake
-        engine.resume_last()
+        reply = engine.resume_last()
         jumps = [value for action, value in fake.commands
                  if action == "position"]
         check("Continue never jumps past the end of a shorter queue",
               jumps == [], str(fake.commands)[:300])
-        check("Continue still plays the remembered track",
-              bool(fake.played), str(fake.played)[:200])
+        check("Continue still resumes the remembered track",
+              bool(fake.played) or ("resume", None) in fake.commands,
+              f"{fake.played} {fake.commands}"[:300])
+        check("Continue counts the queue that really plays, not the stale one",
+              "entry 10 of 10" not in reply.text, reply.text[:200])
 
         # -- a temp queue is rebuilt when its file was pruned ---------------
         session.save(root, {"kind": "temp", "target":

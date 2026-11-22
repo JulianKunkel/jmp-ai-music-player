@@ -1,3 +1,13 @@
+jmp-ai-music-player (1.1.9-1) unstable; urgency=medium
+
+  * 1.1.8 stopped "Continue" from jumping past the end of a shorter queue;
+    this release also makes its answer tell the truth.  The reply used the
+    remembered entry index, so a replayed 6-entry queue could still be
+    announced as "entry 10 of 10".  It now counts the queue that really
+    plays, and drops the entry line when the index no longer fits.
+
+ -- Julian M. Kunkel <julian.kunkel@gwdg.de>  Sun, 22 Nov 2026 19:05:00 +0100
+
 jmp-ai-music-player (1.1.8-1) unstable; urgency=medium
 
   * Fix "Continue" landing on silence when the remembered queue was longer
