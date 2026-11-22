@@ -5,7 +5,8 @@
 # keys when the row is in "function" mode.  Wayland delivers such keys only to
 # the focused window, so JMP can see them only while it is focused.  This
 # script registers the four keys as GNOME *global* shortcuts that call
-# `music-cli`, which makes them work in every application.
+# `jmp-media-action`, which makes them work in every application (and reaches
+# a player that runs in a container).
 #
 # Tradeoff, and it is intentional: a global shortcut is exclusive.  While these
 # bindings exist, F5-F8 no longer reach other applications (F5 stops reloading
@@ -48,11 +49,29 @@ find_cli() {
     return 1
 }
 
+# Prefer the helper: a shortcut starts outside this shell, and the helper can
+# reach the running server even when music-cli would talk to a different mpv.
+find_helper() {
+    if command -v jmp-media-action >/dev/null 2>&1; then
+        command -v jmp-media-action; return 0
+    fi
+    local here script
+    here=$(cd "$(dirname "$0")" && pwd)
+    for script in "$here/lib/chat/media_key_action.py" \
+                  "${XDG_DATA_HOME:-$HOME/.local/share}/julians-music-app/lib/chat/media_key_action.py" \
+                  /usr/lib/jmp/lib/chat/media_key_action.py; do
+        [ -f "$script" ] || continue
+        printf '%s %s' "$(command -v python3 || echo /usr/bin/python3)" "$script"
+        return 0
+    done
+    return 1
+}
+
 if ! command -v gsettings >/dev/null 2>&1; then
     echo "gsettings is not available — this is not a GNOME session." >&2
     exit 1
 fi
-CLI="$(find_cli || true)"
+CLI="$(find_helper || find_cli || true)"
 
 # the paths this script owns, derived from the key list (one per key)
 python() { command -v python3 >/dev/null 2>&1 && python3 "$@" || /usr/bin/python3 "$@"; }
@@ -123,7 +142,7 @@ install() {
         # F5, which GNOME does not know, so the shortcut would be ignored.
         gsettings set "$SCHEMA.custom-keybinding:$path" binding "${key}"
         gsettings set "$SCHEMA.custom-keybinding:$path" command "$CLI $act"
-        printf '  %-6s -> music-cli %-6s  (%s)\n' "$key" "$act" "$path"
+        printf '  %-6s -> %-6s  (%s)\n' "$key" "$act" "$path"
         index=$((index + 1))
     done
     echo "installed ${index} global media key bindings for $CLI"
@@ -156,7 +175,7 @@ remove() {
 status() {
     mapfile -t wanted < <(paths)
     mapfile -t have < <(unpack_list "$(current_list)")
-    printf 'music-cli : %s\n' "${CLI:-not found}"
+    printf 'command   : %s\n' "${CLI:-not found}"
     for path in "${wanted[@]}"; do
         listed=no
         for item in "${have[@]}"; do [ "$item" = "$path" ] && listed=yes; done

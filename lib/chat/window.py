@@ -200,7 +200,23 @@ KEYLOG_FILE = os.path.join(
     os.environ.get("XDG_CACHE_HOME") or
     os.path.join(os.path.expanduser("~"), ".cache"),
     APP_ID, "media-keys.log")
+#: the server URL a desktop shortcut helper reads when the window is gone
+HOST_STATE_FILE = os.path.join(
+    os.environ.get("XDG_CACHE_HOME") or
+    os.path.join(os.path.expanduser("~"), ".cache"),
+    APP_ID, "host.json")
 KEYLOG_MAX = 64 * 1024
+
+
+def _remember_url(url: str) -> None:
+    """Leave the loopback URL where a short-lived shortcut can find it."""
+    try:
+        os.makedirs(os.path.dirname(HOST_STATE_FILE), exist_ok=True)
+        with open(HOST_STATE_FILE, "w", encoding="utf-8") as fh:
+            json.dump({"url": url, "at": time.time()}, fh)
+        os.chmod(HOST_STATE_FILE, 0o600)
+    except OSError:
+        pass
 
 
 def _media_name(name: str) -> bool:
@@ -269,7 +285,7 @@ def _eval_js(view, script: str) -> None:
         pass
 
 
-def _bridge_host(view) -> None:
+def _bridge_host(view, url: str) -> None:
     """Let the page read and set the GNOME global media-key bindings.
 
     The server runs in a container without a session bus, so dconf is only
@@ -278,6 +294,13 @@ def _bridge_host(view) -> None:
     """
     if MEDIA_HOST is None:
         return
+    _remember_url(url)
+    try:
+        # an upgrade can leave our own bindings pointing at an old command;
+        # repairing an existing binding is not installing a new shortcut
+        MEDIA_HOST.repair()
+    except Exception:
+        pass
 
     def _received(_manager, value) -> None:
         try:
@@ -290,7 +313,8 @@ def _bridge_host(view) -> None:
             payload = {}
         op = str(payload.get("op") or "status")
         handler = {"install": MEDIA_HOST.install,
-                   "remove": MEDIA_HOST.remove}.get(op, MEDIA_HOST.status)
+                   "remove": MEDIA_HOST.remove,
+                   "probe": MEDIA_HOST.probe}.get(op, MEDIA_HOST.status)
         try:
             answer = handler()
         except Exception as error:                     # never break the page
@@ -714,7 +738,7 @@ def _gtk3(url: str) -> None:
         pass
     _allow_media(view)
     _bridge_keys(view)
-    _bridge_host(view)
+    _bridge_host(view, url)
     media.view = view
     view.load_uri(url)
     window.add(view)
@@ -764,7 +788,7 @@ def _gtk4(url: str) -> None:
         pass
     _allow_media(view)
     _bridge_keys(view)
-    _bridge_host(view)
+    _bridge_host(view, url)
     media.view = view
     view.load_uri(url)
     window.set_child(view)

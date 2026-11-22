@@ -110,9 +110,12 @@ say "launcher         /usr/bin/music-cli"
 install -D -m 0755 "$HERE/packaging/deb/music-cli" "$STAGE/usr/bin/music-cli"
 
 # global media keys: a function-key row is focus-only on Wayland, so the same
-# four keys are also offered as GNOME global shortcuts calling music-cli
+# four keys are also offered as GNOME global shortcuts calling the helper
 say "media keys       /usr/bin/jmp-media-keys"
 install -D -m 0755 "$HERE/media-keys.sh" "$STAGE/usr/bin/jmp-media-keys"
+say "media action     /usr/bin/jmp-media-action"
+install -D -m 0755 "$HERE/lib/chat/media_key_action.py" \
+    "$STAGE/usr/bin/jmp-media-action"
 
 say "desktop entry    /usr/share/applications"
 install -D -m 0644 "$HERE/julians-music-app.desktop" \

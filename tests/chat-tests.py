@@ -2921,7 +2921,9 @@ def check_window() -> None:
         "elif argv[0] == 'reset':\n"
         "    path = argv[1].split('custom-keybinding:', 1)[1]\n"
         "    data.get('entries', {}).get(path, {}).pop(argv[2], None)\n"
-        "    save()\n")
+        "    save()\n"
+        "elif argv[0] == 'list-recursively':\n"
+        "    print(os.environ.get('FAKE_GSETTINGS_RESERVED', ''))\n")
     fake.chmod(0o755)
     key_root = ("/org/gnome/settings-daemon/plugins/media-keys/"
                 "custom-keybindings/")
@@ -2934,9 +2936,15 @@ def check_window() -> None:
                                      "command": "/home/x/music-cli stop"}}},
                state_file.open("w", encoding="utf-8"))
 
+    # the helper a shortcut should call; the *server* may be in a container,
+    # so a binding must not assume that music-cli reaches the same player
+    helper = fake_bin / "jmp-media-action"
+    helper.write_text("#!/bin/sh\nexit 0\n")
+    helper.chmod(0o755)
+
     saved_env = {key: os.environ.get(key) for key in
                  ("PATH", "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR",
-                  "FAKE_GSETTINGS")}
+                  "FAKE_GSETTINGS", "FAKE_GSETTINGS_RESERVED")}
     try:
         os.environ["PATH"] = str(fake_bin) + os.pathsep + (
             saved_env["PATH"] or "")
@@ -2972,6 +2980,23 @@ def check_window() -> None:
               and state["rows"][0]["path"] == legacy
               and len(state["entries"]) == 5,
               str(state["rows"][0]))
+        check("a shortcut prefers the action helper over music-cli",
+              host.default_cli() == str(helper), host.default_cli())
+
+        # a 1.2.x entry can have the right F5 and still call music-cli, which
+        # may not reach a player in a container: report it and repair it
+        old = json.loads(state_file.read_text(encoding="utf-8"))
+        old["entries"][legacy]["command"] = "/usr/bin/music-cli stop"
+        state_file.write_text(json.dumps(old), encoding="utf-8")
+        stale = host.status(cli="/home/x/music-cli")
+        check("a binding left by an older release is reported as outdated",
+              stale["rows"][0]["stale"] is True
+              and stale["installed"] is False, str(stale["rows"][0]))
+        mended = host.repair(cli="/home/x/music-cli")
+        check("repair rewrites our own stale command, adding nothing",
+              mended["repaired"] == 1 and mended["installed"] is True
+              and len(mended["entries"]) == len(stale["entries"]),
+              str(mended)[:300])
 
         again = host.install(cli="/home/x/music-cli")
         check("installing twice does not duplicate the entries",
@@ -2995,6 +3020,23 @@ def check_window() -> None:
         check("the user's own shortcut survives the removal",
               diodon.get("binding") == "<Super>v"
               and diodon.get("command") == "/usr/bin/diodon", str(diodon))
+
+        # a key another GNOME schema already owns wins the grab, so the
+        # install must say so instead of reporting success
+        os.environ["FAKE_GSETTINGS_RESERVED"] = (
+            "org.gnome.desktop.wm.keybindings switch-x ['F6']")
+        reserved = host.status(cli="/home/x/music-cli")
+        check("a key GNOME owns is reported as a conflict",
+              bool(reserved["conflicts"])
+              and reserved["conflicts"][0]["binding"] == "F6"
+              and reserved["rows"][1].get("reserved_by"),
+              str(reserved["conflicts"])[:200])
+        blocked = host.install(cli="/home/x/music-cli")
+        check("installing over a GNOME-owned key is refused with a reason",
+              blocked.get("ok") is False
+              and "F6" in (blocked.get("error") or ""), str(blocked)[:300])
+        host.remove()
+        os.environ.pop("FAKE_GSETTINGS_RESERVED", None)
 
         os.environ.pop("DBUS_SESSION_BUS_ADDRESS", None)
         os.environ["XDG_RUNTIME_DIR"] = str(work_dir / ".no-session")
@@ -3053,7 +3095,9 @@ def check_window() -> None:
             self.scripts.append(script)
 
     view = _FakeView()
-    window_module._bridge_host(view)
+    real_host_state = window_module.HOST_STATE_FILE
+    window_module.HOST_STATE_FILE = str(work_dir / "host.json")
+    window_module._bridge_host(view, "http://127.0.0.1:8765/?t=test")
     check("the window exposes the host bridge to the page",
           "jmphost" in view.manager.handlers, str(view.manager.handlers))
     answer = {}
@@ -3065,6 +3109,15 @@ def check_window() -> None:
           str(view.scripts[-1:])[:300])
     check("the answer carries the per-key rows",
           '"rows"' in view.scripts[-1], str(view.scripts[-1])[:200])
+    view.manager.handlers["jmphost"](None, _FakeValue({"id": 8, "op": "probe"}))
+    check("the bridge can test whether a press would reach the player",
+          bool(view.scripts) and '"cli"' in view.scripts[-1],
+          str(view.scripts[-1:])[:300])
+    remembered = json.loads((work_dir / "host.json").read_text(encoding="utf-8"))
+    check("the window leaves its URL where a shortcut can find it",
+          remembered.get("url") == "http://127.0.0.1:8765/?t=test",
+          str(remembered))
+    window_module.HOST_STATE_FILE = real_host_state
 
     page = (LIB / "chat" / "webui" / "app.js").read_text(encoding="utf-8")
     check("the page asks the window for the global-key state",
@@ -3076,6 +3129,12 @@ def check_window() -> None:
     check("Settings has a Global media keys section",
           "Global media keys" in page and "Install global shortcuts" in page,
           "the settings panel could not show or fix it")
+    check("Settings can test the route a key press would take",
+          'hostCall("probe")' in page and "reaches the player" in page,
+          "a broken route could not be diagnosed in the UI")
+    check("Settings names a key that GNOME already owns",
+          "reserved_by" in page and "already used by" in page,
+          "a conflicting shortcut would look installed")
     check("the page warns once at start when the keys are focus-only",
           "set up global " in page and "Settings → Playback" in page,
           "the notice is missing")

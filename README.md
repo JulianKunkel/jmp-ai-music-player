@@ -482,16 +482,21 @@ is no new Python dependency.
   forward), and back restarts the current track when it is already under way,
   so no key ever leaves the room silent.  If a
   key does nothing, `~/.cache/julians-music-app/media-keys.log` records every
-  media/function key the window and the page saw (never ordinary typing).  A
+  media/function key the window, the page and a global shortcut saw (never
+  ordinary typing), including which route a shortcut reached.  A
   function-key row is focus-only by design (Wayland has no global key
   observation); `jmp-media-keys --install` registers the same four keys as
-  GNOME global shortcuts calling `music-cli`, so they work in every
-  application — at the cost of taking `F5`–`F8` from other applications
-  (`jmp-media-keys --remove` gives them back).  The same install is in the
-  window: **Settings → Playback → Global media keys** shows each key as
-  *global* or *window only* and installs or removes the bindings in one click
-  (the native window performs the desktop calls, since the server runs in a
-  container without a session bus).  One toast at start says the keys are
+  GNOME global shortcuts, so they work in every application — at the cost of
+  taking `F5`–`F8` from other applications (`jmp-media-keys --remove` gives
+  them back).  The shortcut runs `jmp-media-action`, which reaches the running
+  player through its loopback API first, then the MPRIS player, and only then
+  falls back to `music-cli` — so a source install, a `.deb` and a player in a
+  container cannot point the key at the wrong socket.  The same install is in
+  the window: **Settings → Playback → Global media keys** shows each key as
+  *global* or *window only*, names a key that another GNOME shortcut already
+  owns, and installs, removes or **tests** the route a press would take in one
+  click (the native window performs the desktop calls, since the server runs
+  in a container without a session bus).  One toast at start says the keys are
   focus-only, and the first real key press offers the setup once with the
   tradeoff in plain words; nothing is installed silently.
 - **Profile** opens the sound net diagram of the current song: the twelve

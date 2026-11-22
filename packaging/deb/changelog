@@ -1,3 +1,31 @@
+jmp-ai-music-player (1.2.2-1) unstable; urgency=medium
+
+  * Make the GNOME global media keys actually reach the player.  A binding
+    used to call "music-cli", but a desktop shortcut starts outside the shell
+    that started the app: a source install, a .deb and a player inside a
+    container can all expose a different "music-cli", so the key drove the
+    wrong socket (or none) while the shortcut still looked installed.
+  * Bindings now call "jmp-media-action".  It tries the running server's
+    loopback API first (the URL the window or the MPRIS agent recorded), then
+    the MPRIS player on the session bus, and only then music-cli.  --probe
+    reports which route would work right now.
+  * Settings -> Playback -> Global media keys gained a Test button that shows
+    the live route, and it names a key that another GNOME shortcut already
+    owns instead of claiming the binding works.
+  * An entry left by 1.2.0/1.2.1 (right F5-F8, but calling music-cli) is shown
+    as "outdated" and rewritten in place when the window opens or Install is
+    clicked.  Nothing new is installed silently: only JMP's own bindings are
+    touched, and only to point them at the helper.
+  * Installing no longer reports success when the desktop refused the grab.
+    gsd-media-keys and mutter can fail a grab silently; the install reads the
+    user journal and says so with the exact reason.
+  * The shortcut log line carries the route but never the API token, and the
+    log file is created private (0600).
+  * No music file, tag or playlist is touched; a key press still runs exactly
+    one transport command.
+
+ -- Julian M. Kunkel <julian.kunkel@gwdg.de>  Sun, 22 Nov 2026 23:30:00 +0100
+
 jmp-ai-music-player (1.2.1-1) unstable; urgency=medium
 
   * Fix the GNOME global media-key bindings.  They were written as "<F5>"

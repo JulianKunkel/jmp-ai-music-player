@@ -2947,6 +2947,48 @@ def _native_window(url: str) -> bool:
     return False
 
 
+def _media_agent(url: str) -> None:
+    """Start the host MPRIS agent next to a browser window, when possible.
+
+    The native window owns `org.mpris.MediaPlayer2.jmp` while it is open.  A
+    browser window does not, and a closed window takes the name with it, so
+    the desktop's own media keys would have nothing to talk to.  The agent
+    keeps the name on the *host* session bus; in a server container it finds
+    no bus (or no PyGObject) and exits on its own.
+    """
+    script = Path(__file__).with_name("media_keys.py")
+    if not script.is_file():
+        return
+    if not (os.environ.get("DBUS_SESSION_BUS_ADDRESS")
+            or os.path.exists(f"/run/user/{os.getuid()}/bus")):
+        return
+    for python in _window_pythons():
+        try:
+            running = subprocess.run([python, str(script), "--check"],
+                                     capture_output=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if running.returncode == 0:
+            return
+        try:
+            has_gi = subprocess.run([python, "-c", "import gi"],
+                                    capture_output=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if has_gi.returncode != 0:
+            continue
+        env = dict(os.environ)
+        env.pop("PYTHONHOME", None)
+        try:
+            subprocess.Popen([python, str(script), "--url", url],
+                             stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL,
+                             start_new_session=True, env=env)
+        except OSError:
+            continue
+        return
+
+
 def open_window(url: str) -> bool:
     """Open `url` as an application window when possible.
 
@@ -3017,6 +3059,7 @@ def run_web(root: Path | None = None, host: str = "127.0.0.1", port: int = 0,
     bound_port = httpd.server_address[1]
     url = f"http://{host}:{bound_port}/?t={token}"
     _write_state(service.root, url)
+    _media_agent(url)
 
     thread = threading.Thread(target=httpd.serve_forever, name="chat-http",
                               daemon=True)
