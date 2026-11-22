@@ -35,6 +35,7 @@ application/
 ├── install.sh                  the installer itself (--docker / --host)
 ├── build-image.sh              docker/podman build only
 ├── build-deb.sh                Debian/Ubuntu package (dist/*.deb)
+├── publish-release.sh          tag + GitHub release + asset upload
 ├── packaging/deb/              launcher, man page, copyright, maintainer scripts
 ├── docs/screenshots/           the real captures used above
 ├── VERSION                     release version of the package
@@ -301,9 +302,11 @@ music-cli chat --web
 
 The player finds `~/Musik`, `~/Music`, `~/music` and the current folder by
 itself; `~/.config/jmp/library` (or `/etc/jmp/library`) overrides that.
-Indexing, psychoacoustic measurement, lyric transcription and the tag editor
-call the library's own toolkit in `<library>/scripts/` and use its
-`library-work/`; the package ships the player, not those per-library tools.
+Indexing, psychoacoustic measurement, tagging and the sound features call the
+library's own toolkit in `<library>/scripts/` and use its `library-work/`; the
+package ships the player, not those per-library tools.  Lyrics are the
+exception: the local Whisper transcriber is bundled and installs its backend
+into the library (see [Lyrics](#lyrics-local-transcription)).
 
 Build the package from this folder — the script is reproducible, needs only
 `dpkg-deb`, and produces `dist/jmp-ai-music-player_<version>_all.deb` plus a
@@ -313,6 +316,16 @@ SHA-256 file:
 ./build-deb.sh                          # version from VERSION
 ./build-deb.sh --version 1.0.1 --out /tmp/release
 ./build-deb.sh --modules ../download-modules   # optional: compile a module in
+```
+
+Publishing is one command as well.  It builds (or reuses) the package, checks
+and pushes the tag, creates the release if needed and uploads the `.deb` and
+its `.sha256`; GitHub's release API needs a token, so on the first run it asks
+you to log in with `gh` (git stays on SSH):
+
+```bash
+./publish-release.sh                     # tag v$(cat VERSION), upload
+./publish-release.sh --draft --notes release-notes.md
 ```
 
 ## What you get
