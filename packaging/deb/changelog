@@ -1,3 +1,19 @@
+jmp-ai-music-player (1.2.0-1) unstable; urgency=medium
+
+  * The global media keys are now a setting instead of a terminal job.
+    Settings -> Playback gained a "Global media keys" section that reads the
+    live GNOME state, installs the four bindings in one click, removes them
+    again, and keeps every other custom shortcut untouched.  The music server
+    runs in a container without a session bus, so the native window performs
+    the gsettings calls and answers the page through the jmphost bridge.
+  * One notice at start says the keys are focus-only, and the first real key
+    press offers "Set up global keys" once, with the tradeoff in plain words.
+    Nothing is installed silently and pressing a key again does not nag.
+  * No music file, tag or playlist is touched; a key press still runs exactly
+    one transport command.
+
+ -- Julian M. Kunkel <julian.kunkel@gwdg.de>  Sun, 22 Nov 2026 21:10:00 +0100
+
 jmp-ai-music-player (1.1.10-1) unstable; urgency=medium
 
   * The media row of this keyboard sends plain F5-F8, which Wayland delivers

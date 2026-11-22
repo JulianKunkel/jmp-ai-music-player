@@ -29,6 +29,25 @@ import time
 from urllib.parse import parse_qs, quote, urlparse
 from urllib.request import Request, urlopen
 
+def _sibling(name: str):
+    """Import a module that sits next to this file (the host-side helpers)."""
+    import importlib.util
+
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), name)
+    if not os.path.isfile(path):
+        return None
+    spec = importlib.util.spec_from_file_location("jmp_" + name[:-3], path)
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        return None
+    return module
+
+
+#: the GNOME global media-key bindings (read/write from the *host*)
+MEDIA_HOST = _sibling("media_keys_host.py")
+
 APP_ID = "julians-music-app"
 APP_TITLE = "JulAIn Music Player"
 #: the size the window opens with: wide enough for the 940 px settings modal
@@ -236,6 +255,65 @@ def _modifier_mask(Gdk) -> int:
     return mask
 
 
+def _eval_js(view, script: str) -> None:
+    """Run a script in the page, on WebKit2 4.x and WebKit 6.0 alike."""
+    try:
+        view.run_javascript(script, None, None, None)       # WebKit2 4.x
+        return
+    except Exception:
+        pass
+    try:
+        view.evaluate_javascript(script, -1, None, None, None,
+                                 None, None)                # WebKit 6.0
+    except Exception:
+        pass
+
+
+def _bridge_host(view) -> None:
+    """Let the page read and set the GNOME global media-key bindings.
+
+    The server runs in a container without a session bus, so dconf is only
+    reachable from this window.  The page posts ``{id, op}`` to ``jmphost``
+    and gets the answer back through ``window.jmpHostAnswer``.
+    """
+    if MEDIA_HOST is None:
+        return
+
+    def _received(_manager, value) -> None:
+        try:
+            text = value.get_js_value().to_string()
+        except Exception:
+            text = str(value)
+        try:
+            payload = json.loads(text or "{}")
+        except Exception:
+            payload = {}
+        op = str(payload.get("op") or "status")
+        handler = {"install": MEDIA_HOST.install,
+                   "remove": MEDIA_HOST.remove}.get(op, MEDIA_HOST.status)
+        try:
+            answer = handler()
+        except Exception as error:                     # never break the page
+            answer = {"available": False, "installed": False, "rows": [],
+                      "ok": False, "error": str(error)}
+        answer = dict(answer or {})
+        answer["view"] = "media-keys"
+        answer["op"] = op
+        answer["id"] = payload.get("id")
+        _eval_js(view, "window.jmpHostAnswer && window.jmpHostAnswer("
+                       + json.dumps(answer) + ");")
+
+    try:
+        manager = view.get_user_content_manager()
+        manager.register_script_message_handler("jmphost")
+    except Exception:
+        return
+    try:
+        manager.connect("script-message-received::jmphost", _received)
+    except Exception:
+        pass
+
+
 def _bridge_keys(view) -> None:
     """Let the page report which keys it saw, for the same diagnosis.
 
@@ -361,9 +439,42 @@ class _Media:
         self.server = _Server(url)
         self.connection = None
         self.present = None
+        self.view = None            # the WebView, so a hint can reach the page
         self.status: dict = {}
         self.state = "Stopped"
         self.track_key = None
+        self._focus_only = None     # cached: are global bindings missing?
+        self._hinted = False
+
+    def _global_missing(self) -> bool:
+        """True when the keys are focus-only and the desktop could fix that.
+
+        Measured once per window: reading it on every press would mean four
+        ``gsettings`` calls per key, and the state is not what changes mid-run.
+        """
+        if self._focus_only is None:
+            state = {}
+            if MEDIA_HOST is not None:
+                try:
+                    state = MEDIA_HOST.status()
+                except Exception:
+                    state = {}
+            self._focus_only = bool(state.get("available")) \
+                and not state.get("installed")
+        return bool(self._focus_only)
+
+    def notify_hint(self) -> None:
+        """Ask the page once to offer global bindings, after a real key press.
+
+        This is the honest moment for it: the listener just pressed a key and
+        it worked, so the one thing that would surprise them later — it stops
+        working when another window has focus — is worth a single prompt.
+        """
+        if self._hinted or self.view is None or not self._global_missing():
+            return
+        self._hinted = True
+        _eval_js(self.view, "window.jmpMediaKeysHint && "
+                            "window.jmpMediaKeysHint();")
 
     def act(self, action: str, value=None) -> None:
         def _send() -> None:
@@ -589,6 +700,8 @@ def _gtk3(url: str) -> None:
         action = media.key(name, plain)
         _keylog("gtk3", name, event.keyval, event.hardware_keycode,
                 int(event.state), action or "-")
+        if action:
+            media.notify_hint()
         return bool(action)
 
     window.connect("key-press-event", _key)
@@ -601,6 +714,8 @@ def _gtk3(url: str) -> None:
         pass
     _allow_media(view)
     _bridge_keys(view)
+    _bridge_host(view)
+    media.view = view
     view.load_uri(url)
     window.add(view)
     window.show_all()
@@ -635,6 +750,8 @@ def _gtk4(url: str) -> None:
         plain = not (state & _modifier_mask(Gdk))
         action = media.key(name, plain)
         _keylog("gtk4", name, keyval, keycode, int(state), action or "-")
+        if action:
+            media.notify_hint()
         return bool(action)
 
     controller.connect("key-pressed", _key)
@@ -647,6 +764,8 @@ def _gtk4(url: str) -> None:
         pass
     _allow_media(view)
     _bridge_keys(view)
+    _bridge_host(view)
+    media.view = view
     view.load_uri(url)
     window.set_child(view)
     loop = GLib.MainLoop()

@@ -2864,6 +2864,205 @@ def check_window() -> None:
               window_module.KEYLOG_FILE.endswith("keys.log"),
               window_module.KEYLOG_FILE)
 
+    # -- global media keys through the desktop ------------------------------
+    # A function-key row is focus-only on Wayland, so the app offers GNOME
+    # global shortcuts.  The *server* lives in a container without a session
+    # bus, so the native window performs the gsettings calls; this block
+    # checks the host module and the bridge it feeds.
+    import json as _json
+
+    spec_host = importlib.util.spec_from_file_location(
+        "jmp_media_keys_host", LIB / "chat" / "media_keys_host.py")
+    host = importlib.util.module_from_spec(spec_host)
+    spec_host.loader.exec_module(host)
+
+    work_dir = Path(tempfile.mkdtemp(prefix="media-keys-"))
+    fake_bin = work_dir / ".fake-bin"
+    fake_bin.mkdir(parents=True, exist_ok=True)
+    state_file = work_dir / ".fake-gsettings.json"
+    fake = fake_bin / "gsettings"
+    fake.write_text(
+        "#!/usr/bin/env python3\n"
+        "import ast, json, os, sys\n"
+        "from pathlib import Path\n"
+        "store = Path(os.environ['FAKE_GSETTINGS'])\n"
+        "data = json.loads(store.read_text()) if store.exists() else {}\n"
+        "SCHEMA = 'org.gnome.settings-daemon.plugins.media-keys'\n"
+        "def save():\n"
+        "    store.write_text(json.dumps(data, indent=1))\n"
+        "def quoted(text):\n"
+        "    return \"'\" + str(text).replace(\"'\", \"\") + \"'\"\n"
+        "argv = sys.argv[1:]\n"
+        "if argv[0] == 'get':\n"
+        "    schema, key = argv[1], argv[2]\n"
+        "    if 'custom-keybinding:' in schema:\n"
+        "        path = schema.split('custom-keybinding:', 1)[1]\n"
+        "        value = data.get('entries', {}).get(path, {}).get(key, '')\n"
+        "        print(quoted(value))\n"
+        "    else:\n"
+        "        items = data.get('list', [])\n"
+        "        print('[' + ', '.join(quoted(i) for i in items) + ']')\n"
+        "elif argv[0] == 'set':\n"
+        "    schema, key = argv[1], argv[2]\n"
+        "    value = argv[3]\n"
+        "    parsed = ast.literal_eval(value) if value.startswith('[') else value.strip(\"'\")\n"
+        "    if 'custom-keybinding:' in schema:\n"
+        "        path = schema.split('custom-keybinding:', 1)[1]\n"
+        "        data.setdefault('entries', {}).setdefault(path, {})[key] = parsed\n"
+        "    else:\n"
+        "        data['list'] = list(parsed)\n"
+        "    save()\n"
+        "elif argv[0] == 'reset':\n"
+        "    path = argv[1].split('custom-keybinding:', 1)[1]\n"
+        "    data.get('entries', {}).get(path, {}).pop(argv[2], None)\n"
+        "    save()\n")
+    fake.chmod(0o755)
+    _json.dump({"list": ["/org/gnome/settings-daemon/plugins/media-keys/"
+                         "custom-keybindings/custom0/"],
+                "entries": {"/org/gnome/settings-daemon/plugins/media-keys/"
+                            "custom-keybindings/custom0/":
+                            {"name": "diodon", "binding": "<Super>v",
+                             "command": "/usr/bin/diodon"}}},
+               state_file.open("w", encoding="utf-8"))
+
+    saved_env = {key: os.environ.get(key) for key in
+                 ("PATH", "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR",
+                  "FAKE_GSETTINGS")}
+    try:
+        os.environ["PATH"] = str(fake_bin) + os.pathsep + (
+            saved_env["PATH"] or "")
+        os.environ["FAKE_GSETTINGS"] = str(state_file)
+        os.environ["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=/tmp/not-real"
+        state = host.status()
+        check("the settings can see whether global keys are installed",
+              state["available"] is True and state["installed"] is False
+              and len(state["rows"]) == 4, str(state)[:300])
+        check("an existing desktop binding is left alone in the report",
+              any("custom0" in path for path in state["others"])
+              and not state["conflicts"], str(state["others"]))
+
+        state = host.install(cli="/home/x/music-cli")
+        check("installing adds the four keys", state["ok"] is True
+              and state["installed"] is True, str(state)[:300])
+        check("the install keeps the existing desktop binding",
+              any("custom0" in path for path in state["entries"]),
+              str(state["entries"])[:300])
+        check("each key calls music-cli with its own action",
+              all(row["command"] == f"/home/x/music-cli {row['action']}"
+                  for row in state["rows"]),
+              str([row["command"] for row in state["rows"]]))
+        check("each key is bound to its printed function key",
+              [row["binding"] for row in state["rows"]] ==
+              ["<F5>", "<F6>", "<F7>", "<F8>"],
+              str([row["binding"] for row in state["rows"]]))
+
+        again = host.install(cli="/home/x/music-cli")
+        check("installing twice does not duplicate the entries",
+              len(again["entries"]) == len(state["entries"]),
+              f"{len(again['entries'])} vs {len(state['entries'])}")
+
+        changed = host.install([("F5", "toggle")], cli="/home/x/music-cli")
+        check("a changed key set replaces the old bindings",
+              changed["installed"] is True and len(changed["entries"]) == 2,
+              str(changed["entries"])[:300])
+
+        removed = host.remove()
+        check("removing drops only the app's own bindings",
+              removed["installed"] is False and len(removed["entries"]) == 1
+              and "custom0" in removed["entries"][0],
+              str(removed["entries"])[:300])
+        left = json.loads(state_file.read_text(encoding="utf-8"))
+        diodon = left.get("entries", {}).get(
+            "/org/gnome/settings-daemon/plugins/media-keys/"
+            "custom-keybindings/custom0/", {})
+        check("the user's own shortcut survives the removal",
+              diodon.get("binding") == "<Super>v"
+              and diodon.get("command") == "/usr/bin/diodon", str(diodon))
+
+        os.environ.pop("DBUS_SESSION_BUS_ADDRESS", None)
+        os.environ["XDG_RUNTIME_DIR"] = str(work_dir / ".no-session")
+        (work_dir / ".no-session").mkdir(exist_ok=True)
+        offline = host.status()
+        check("without a session bus the settings say so honestly",
+              offline["available"] is False and "bus" in
+              (offline["error"] or "").casefold(), str(offline)[:200])
+        refused = host.install(cli="/home/x/music-cli")
+        check("installing without a session bus is refused, not guessed",
+              refused.get("ok") is False and refused.get("installed") is False,
+              str(refused)[:200])
+    finally:
+        for key, value in saved_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    check("the window loads the host media-key module",
+          window_module.MEDIA_HOST is not None,
+          str(window_module.MEDIA_HOST))
+
+    class _FakeManager:
+        def __init__(self):
+            self.handlers = {}
+
+        def register_script_message_handler(self, name):
+            self.handlers.setdefault(name, None)
+
+        def connect(self, signal, callback):
+            if signal.startswith("script-message-received::"):
+                self.handlers[signal.split("::", 1)[1]] = callback
+
+    class _FakeValue:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def get_js_value(self):
+            outer = self.payload
+
+            class _JS:
+                def to_string(self_inner):
+                    return json.dumps(outer)
+            return _JS()
+
+    class _FakeView:
+        def __init__(self):
+            self.scripts = []
+            self.manager = _FakeManager()
+
+        def get_user_content_manager(self):
+            return self.manager
+
+        def run_javascript(self, script, *args):
+            self.scripts.append(script)
+
+    view = _FakeView()
+    window_module._bridge_host(view)
+    check("the window exposes the host bridge to the page",
+          "jmphost" in view.manager.handlers, str(view.manager.handlers))
+    answer = {}
+    view.manager.handlers["jmphost"](None, _FakeValue({"id": 7, "op": "status"}))
+    check("the bridge answers status through the page callback",
+          bool(view.scripts)
+          and "jmpHostAnswer" in view.scripts[-1]
+          and '\"id\": 7' in view.scripts[-1].replace(" ", " "),
+          str(view.scripts[-1:])[:300])
+    check("the answer carries the per-key rows",
+          '"rows"' in view.scripts[-1], str(view.scripts[-1])[:200])
+
+    page = (LIB / "chat" / "webui" / "app.js").read_text(encoding="utf-8")
+    check("the page asks the window for the global-key state",
+          "messageHandlers.jmphost" in page and "jmpHostAnswer" in page,
+          "the bridge would be dead code")
+    check("a media key without global bindings offers to install them",
+          "jmpMediaKeysHint" in page
+          and "Set up global keys" in page, "no prompt would ever appear")
+    check("Settings has a Global media keys section",
+          "Global media keys" in page and "Install global shortcuts" in page,
+          "the settings panel could not show or fix it")
+    check("the page warns once at start when the keys are focus-only",
+          "set up global " in page and "Settings → Playback" in page,
+          "the notice is missing")
+
     # -- the MPRIS agent that outlives the window ---------------------------
     agent_src = (LIB / "chat" / "media_keys.py").read_text(encoding="utf-8")
     check("an agent owns the MPRIS player while the window is closed",
