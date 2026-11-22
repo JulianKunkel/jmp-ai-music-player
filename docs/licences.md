@@ -1,52 +1,73 @@
 # Licence and copyright audit
 
-**Question:** is there any copyright reason not to release this on GitHub
-openly?
+**Question:** can the open player be published on GitHub, and what must the
+published release contain?
 
-**Short answer: no blocker. The release is
-GPL-3.0-or-later.** The reason is one dependency, not the app's own code:
-`mutagen` is GPL-2.0-or-later and is imported in-process by three modules, so
-the distributed whole is a derivative work and has to be GPL-compatible. The
-"or later" clause lets that whole be distributed under the GPL-3, which is what
-this project chose. The `LICENSE` file in this folder is the full GPL-3 text;
-`NOTICE` carries the copyright line and the AI-assistance statement. Nothing in
-the repository prevents an open release; the rest of this page lists the
-obligations and the non-copyright risks, which are a download-terms question
-rather than a licensing one.
+**Short answer: yes for the open code, under GPL-3.0-or-later.** The decisive
+dependency is `mutagen`, which is GPL-2.0-or-later and is imported into the
+app's own Python process. That makes the distributed whole a combined work,
+and its "or later" clause permits the GPL-3. The `LICENSE` file is the full
+GPL-3 text; `NOTICE` carries the copyright line and the AI-assistance
+statement.
+
+The open release machine-checkable gate is about *what is shipped*, not about
+the licence of the app's own source:
+
+1. the GitHub `.deb` must contain **no optional import module** and no cached
+   byte-code — a sourceless module bundled in-process would be a GPL problem.
+
+Two content risks were also identified and cleaned up: the repository's two
+full-lyric screenshots showed real copyrighted lyric lines, and older commits
+and release notes still named the optional downloader explicitly. Both were
+removed from the tree, the history and the public release notes. See §6.
 
 This is an engineering audit, not legal advice. If money or a company is
-involved, have a lawyer read §7 and §8.
+involved, have a lawyer read §5, §6 and the release checklist in §4.
 
 ---
 
-## 1. What is actually in the release
+## 1. What is in the repository and in the release
 
-`application/` is the whole deliverable and the git-tracked folder (91 files
-before this audit). It contains:
+The repository root is the application; there is no nested `application/`
+folder any more. The git-tracked tree contains:
 
-- the app's Python code (`lib/`), the window's HTML/CSS/JS (`lib/chat/webui/`),
-  the skill descriptions and the tests;
-- the installers, the Dockerfile, the compose file and requirements;
-- the launcher icon (`julians-music-app.svg`, three PNG renders) and the logo
-  (`docs/logo-jmp.svg`, `docs/logo-jmp.png`).
+- the app's Python code (`lib/`), the window's HTML/CSS/JS
+  (`lib/chat/webui/`), the skill descriptions and the tests;
+- the installers, the `Dockerfile`, the compose file and `requirements.txt`;
+- the packaging files under `packaging/deb/`;
+- the launcher icon (`julians-music-app.svg`, PNG renders) and the logo
+  (`docs/logo-jmp.svg`, `docs/logo-jmp.png`);
+- the documentation under `docs/`, including this audit.
 
-It contains **no music, no cover art, no lyric text, no user database, no
-token, no API key** and no bundled third-party source tree. Verified:
+These directories are **git-ignored** and must stay out of every commit and
+release asset:
 
-```bash
-find application -type f \( -iname '*.mp3' -o -iname '*.wav' -o \
-     -iname '*.flac' -o -iname '*.ogg' -o -iname '*.opus' -o \
-     -iname '*.m4a' \)          # → no output
-find application -type f \( -iname '*.woff*' -o -iname '*.ttf' -o \
-     -iname '*.otf' \)          # → no output (no bundled fonts)
+```
+download-modules/     a module checkout (its own repository)
+.build-modules/       the staging copy used by an image build
+lib/modules/          compiled module byte-code
+build/  dist/         build output and the release .deb
 ```
 
-The mascot and the launcher icon were drawn for this project as SVG. The
-image-model attempt failed, so **no third-party generated image is part of the
-release**; there is nothing to attribute to an image model.
+The GitHub release contains only the Debian package and its `.sha256` file.
+The package installs the open `lib/`, the launcher, the icon, the man page and
+the documentation under `/usr/lib/jmp` and `/usr/share`. It contains **no
+music, cover art, lyric database, user profile, secret, token, screenshot or
+module payload**.
 
-The music library lives next to `application/` in the author's checkout and is
-**not** part of the git repository. Keep it that way; see §6.
+Verify the built package before it is uploaded:
+
+```bash
+dpkg-deb --contents dist/jmp-ai-music-player_<version>-1_all.deb \
+  | grep -E '(^|/)lib/modules/|\.py[co]$|(^|/)jmp_download/'
+# → no output
+```
+
+`publish-release.sh` builds with `JMP_MODULES=` and `--no-modules`, then runs
+exactly this check and refuses to upload if anything matches. `build-deb.sh`
+repeats the check for an open build before it writes the checksum. This is a
+release gate, not a convention: a local module checkout cannot silently enter
+the asset.
 
 ---
 
@@ -59,32 +80,35 @@ The music library lives next to `application/` in the author's checkout and is
 | textual | 8.2.8 | MIT | the terminal UI |
 | rich | 15.0.0 | MIT | terminal rendering used by textual |
 | pygments | 2.21.0 | BSD-2-Clause | syntax colouring in textual |
-| the import fetcher *(optional module only)* | 2026.10.26 | Unlicense (public-domain style) | search and audio import in a build that includes a download module; **not** a dependency of the open player |
+| markdown-it-py / mdurl | current | MIT | Markdown rendering in the TUI |
+| platformdirs | current | MIT | per-user paths |
+| typing_extensions | current | PSF-2.0 | typing backports |
 
-**The decisive fact:** `mutagen` is not a separate process. It is imported into
-the app's Python process, so the app and mutagen form one combined work. The
-GPL requires that the combined work be distributed under the GPL. Because
+**The decisive fact:** `mutagen` is not a separate process. It is imported
+into the app's Python process, so the app and mutagen form one combined work.
+The GPL requires that the combined work be distributed under the GPL. Because
 mutagen is `GPL-2.0-or-later`, GPL-2 and GPL-3 are both permitted; JMP
-distributes under **GPL-3.0-or-later**, which the "or later" clause of mutagen
-allows. (If a GPL-2-only dependency ever entered the process, the choice would
-fall back to GPL-2.0-or-later. Nothing here is GPL-2-only.)
+distributes under **GPL-3.0-or-later**, which the "or later" clause allows.
+(If a GPL-2-only dependency ever entered the process, the choice would fall
+back to GPL-2.0-or-later. Nothing here is GPL-2-only.)
 
 The rest of the in-process dependencies are permissive and add no condition
 beyond attribution in the source tree. They do not force a different licence.
 
 > If a permissive licence were a hard requirement, the only route is to remove
-> the in-process mutagen import (for example move tagging into a separate
-> GPL helper process or replace mutagen), then re-audit. That is a code change,
+> the in-process mutagen import — for example move tagging into a separate
+> GPL helper process or replace mutagen — then re-audit. That is a code change,
 > not a paperwork change. As shipped today, GPL is the correct answer, and
 > GPL-3.0-or-later is the version chosen.
 
 ---
 
-## 3. Runtime and image dependencies (separate programs)
+## 3. Runtime, ASR and image dependencies (separate programs)
 
-These run as their own processes or are linked by the desktop stack. They do
-not change the app's source licence, but a **distributed container image** has
-to carry their notices and, for GPL programs, a way to obtain the source.
+These run as their own processes or are installed into a local virtual
+environment. They do not change the app's source licence, but a **distributed
+container image** has to carry their notices and, for GPL programs, a way to
+obtain the source.
 
 | Component | Licence | Notes |
 |---|---|---|
@@ -99,17 +123,30 @@ to carry their notices and, for GPL programs, a way to obtain the source.
 | faster-whisper | MIT | local lyric/voice transcription |
 | ctranslate2 | MIT | inference backend |
 | onnxruntime | MIT | VAD runtime |
-| av (PyAV) | BSD-3-Clause | audio decoding for the ASR venv |
+| av (PyAV) | BSD-3-Clause | audio decoding for the ASR venv; PyAV wheels bundle FFmpeg libraries — check the build flags of the exact wheel and include FFmpeg's notices/source offer if you ship the image |
 | huggingface_hub / tokenizers | Apache-2.0 | model download and tokenisation |
+| tqdm | **MPL-2.0 AND MIT** | progress bars; a transitive dependency of `faster-whisper` / `huggingface_hub` in the ASR venv |
+| certifi | **MPL-2.0** | CA bundle; only when the optional module's fetcher is installed with its default extras — not a dependency of the open player |
+| requests / urllib3 / websockets / brotli / pycryptodomex / secretstorage | Apache-2.0 / MIT / BSD-3 / MIT / BSD-2 / BSD-3 | transitive dependencies of a fetcher-based module, if installed |
 | Whisper model weights | MIT (OpenAI Whisper release) | downloaded on first use; check the model card of the exact model you fetch |
 | Clementine (optional build arg) | GPL-2+ | only when `WITH_CLEMENTINE=true`; separate GUI player |
-| SongRec (optional, repository `tools/`) | **GPL-3.0+** | a separate Rust binary used by helper reports; **not** in `application/`, not in the release |
+| SongRec (optional, repository `tools/`) | **GPL-3.0+** | a separate Rust binary used by helper reports; **not** in the repository root and not in the release |
+
+### MPL-2.0 note
+
+MPL-2.0 is file-level copyleft, not a viral whole-work licence. Using an
+unmodified MPL library in a separate process or virtual environment does not
+relicense the app. If the library is distributed in an image, ship its licence
+text and notices and make the source of the MPL-covered files available (the
+upstream release is normally enough). This audit lists `tqdm` and `certifi`
+because they are the MPL components that can appear transitively; neither is
+part of the open `.deb`.
 
 ### What a container release owes
 
-If you publish only the source folder, the GPL obligations are simple: the
-`LICENSE`, the source, and the notices above. If you publish a **built image**
-that contains mpv, ffmpeg and the other GPL/LGPL binaries, then:
+If you publish only the source, the GPL obligations are simple: the `LICENSE`,
+the source, and the notices above. If you publish a **built image** that
+contains mpv, ffmpeg and the other GPL/LGPL binaries, then:
 
 1. include the licence texts and copyright notices of those packages (the
    Debian/Ubuntu `/usr/share/doc/<pkg>/copyright` files are the canonical
@@ -122,37 +159,92 @@ that contains mpv, ffmpeg and the other GPL/LGPL binaries, then:
 
 The easiest honest route is to publish the **source and the build scripts**,
 let people build the image themselves, and state in the README that the image
-bundles distribution packages under their own licences. This repository already
-behaves that way: `install-desktop.sh` builds the image locally from `apt`.
+bundles distribution packages under their own licences. This repository
+already behaves that way: `install-desktop.sh` builds the image locally from
+`apt`.
 
 ---
 
 ## 4. Obligations checklist for an open GitHub release
 
-- [x] `LICENSE` with the full GPL-3.0 text in `application/`.
-- [x] `NOTICE` with the copyright line.
-- [x] A “Licence” section in `README.md` saying **GPL-3.0-or-later** and
+- [x] `LICENSE` with the full GPL-3.0 text.
+- [x] `NOTICE` with the copyright line and the AI-assistance statement.
+- [x] A "Licence" section in `README.md` saying **GPL-3.0-or-later** and
       pointing at `LICENSE`, `NOTICE` and this audit.
-- [x] The AI-assistance statement, in `NOTICE`, `README.md` and §8 below.
-- [ ] Keep `requirements.txt` and the Dockerfile visible; they are the
+- [x] Keep `requirements.txt` and the `Dockerfile` visible; they are the
       dependency bill of materials.
+- [x] Build the uploaded `.deb` with `JMP_MODULES=` and `--no-modules`, and
+      verify that it contains no `lib/modules/`, `jmp_download/` or `.pyc`.
+      `publish-release.sh` enforces this; `build-deb.sh` repeats it.
+- [x] Remove `docs/screenshots/lyrics.png` and
+      `docs/screenshots/lyrics-playlist.png` from the tree **and from the git
+      history**: both showed real lyric lines (see §6). Review any new
+      screenshot before publishing it.
 - [ ] Do not commit the music folder, `LibraryData/`, `library-work/`,
       playlists that name real files, tokens, `secrets.json`, or the caches.
-      `application/.gitignore` already excludes byte code, venvs and logs;
-      add the library and app-state folders at the repository root if the
-      repository ever contains more than `application/`.
-- [ ] If the repository grows to include `scripts/` and `tools/SongRec`, give
-      SongRec its own GPL-3 notice and do not relicense it. It is a separate
-      program; the app calls it as a subprocess and does not import it.
+      The root `.gitignore` already excludes byte code, venvs, modules, the
+      library state and the release output.
+- [ ] If the repository ever includes `tools/SongRec`, give it its own GPL-3
+      notice and do not relicense it. It is a separate program; the app calls
+      it as a subprocess and does not import it.
 - [ ] If you distribute a built image, add the notices/source offer from §3.
-- [x] Keep the copyright line in a `NOTICE` file with the year and the
-      author's name.
-- [ ] Do a quick trademark check before using “JMP” commercially; copyright
+- [ ] Do a quick trademark check before using "JMP" commercially; copyright
       does not cover the name, trademark might.
+- [ ] If you ever distribute a build **with** an import module, satisfy §5
+      first.
 
 ---
 
-## 5. Copyright in the *content*, not the code
+## 5. The optional import module and the GPL
+
+Audio import is not part of the open repository and not part of the published
+package. It lives in a separate module checkout. `lib/chat/downloads.py` is the
+facade: when a module is present it imports the provider package **into the
+app's own process**; when it is absent the player compiles and runs without the
+feature.
+
+That design is fine for a local, unpublished build and is a **GPL problem for a
+distributed build**:
+
+- the app already forms a combined work with GPL-2.0-or-later `mutagen`;
+- the module is imported into the same process and shares the app's data
+  structures and call surface;
+- `build-modules.py` deliberately deletes the module's `.py` files and ships
+  only `.pyc` byte-code.
+
+A GPL-3 combined work must be conveyed with its **complete corresponding
+source**, under GPL-compatible terms. Sourceless byte-code is not source, and a
+proprietary module cannot be made GPL-compatible just by placing it in a
+separate folder. Therefore:
+
+**Do not upload, publish or hand out a `.deb`, image, tarball or archive that
+contains the module.** The release gate in §1 exists for this reason. The
+earlier statement in this audit that a download module is "not a licence
+problem" was wrong; it is a licence problem as soon as the module is
+distributed in-process.
+
+If a module build must ever be distributed, the realistic options are:
+
+1. publish the module's source under a GPL-3-compatible licence; or
+2. re-architect it as a genuinely separate program with arm's-length
+   communication only (no shared in-process objects or data structures), and
+   have a lawyer confirm that the separation is respected; or
+3. remove the GPL in-process dependency that makes the whole work GPL (see
+   §2), which is a substantial code change.
+
+The module's own dependencies need a separate audit. The reference module uses
+an external fetcher under the Unlicense; installing it with default extras can
+add `certifi` (MPL-2.0) and permissive HTTP/TLS libraries. Those notices belong
+with the module, not with the open player, and are irrelevant to the published
+`.deb` because it contains neither.
+
+`docs/modules.md` documents the provider contract for private builds. It is
+also shipped in the `.deb`, so it must stay a description of the interface, not
+a licence to redistribute a closed module.
+
+---
+
+## 6. Copyright in the *content*, not the code
 
 The app is a player and an indexer; it ships no content. But the workflow can
 create content that is not yours to publish:
@@ -166,26 +258,28 @@ create content that is not yours to publish:
   Publishing a database of transcribed lyrics can infringe the underlying
   lyrics copyright even though the transcription is machine-made. Keep
   `lyrics.db` and any `.lrc` export out of the release and out of public
-  screenshots.
-- **Audio downloads (optional module).** The open repository has no download
-  feature. A build-time module may add one; the reference module uses
-  `the import fetcher`, which is legal software with a permissive licence, but downloading
-  can violate a site's terms and the rightsholder's copyright depending on the
-  jurisdiction and the use. This is a **non-licence risk of that module, not of
-  the code licence**. State it plainly in the module's own docs, keep the
-  feature opt-in, and do not ship a pre-filled download queue or a bundled
-  media sample.
+  screenshots. The two tracked files that showed real lyric lines
+  (`docs/screenshots/lyrics.png` and `docs/screenshots/lyrics-playlist.png`)
+  were removed from the tree and from the rewritten history; do not reintroduce
+  them. Any future screenshot that shows transcribed words needs a synthetic
+  or public-domain example.
+- **Audio imports (optional module).** The open repository has no import
+  feature. A build-time module may add one; downloading can violate a source
+  site's terms and the rightsholder's copyright depending on the jurisdiction
+  and the use. This is a **non-licence risk of that module, not of the open
+  code licence**. State it plainly in the module's own docs, keep the feature
+  opt-in, and do not ship a pre-filled queue or a bundled media sample.
 - **Third-party metadata and artwork lookups.** MusicBrainz, Cover Art
   Archive, iTunes and Deezer have their own terms; the app queries them only
   when the user runs the artwork tool. Do not publish the fetched cache.
 - **The product name and logo.** The logo and icons are original SVG/PNG made
-  for this project. “JulAIn” is a pun on the author's name; do a trademark
+  for this project. "JulAIn" is a pun on the author's name; do a trademark
   search if the project becomes commercial. Copyright in the drawings is the
   author's.
 
 ---
 
-## 6. Privacy and personal data in the release
+## 7. Privacy and personal data in the release
 
 There is no account, no telemetry and no analytics. Still, the app's working
 folders contain personal data and must stay out of git:
@@ -206,27 +300,29 @@ release checklist above are the safeguard. The architecture page
 
 ---
 
-## 7. Straight answer, one more time
+## 8. Straight answers, one more time
 
 | Question | Answer |
 |---|---|
-| Is there a copyright reason **not** to release the code openly? | **No.** The code is the author's (written with AI assistance, see §8); the dependencies are free software. |
-| What licence does the release use? | **GPL-3.0-or-later**, because `mutagen` is GPL-2.0-or-later and is imported in-process; its “or later” clause permits the GPL-3. |
-| Can the repository stay public with the music on the same disk? | Yes, as long as the music is **not committed**. `application/` is the release; the library is data. |
+| Is there a copyright reason **not** to release the open code? | **No.** The code is the author's (written with AI assistance, see §9); the dependencies are free software. |
+| What licence does the release use? | **GPL-3.0-or-later**, because `mutagen` is GPL-2.0-or-later and is imported in-process; its "or later" clause permits the GPL-3. |
+| Can the repository stay public with the music on the same disk? | Yes, as long as the music is **not committed**. The root repository is the release; the library is data. |
 | Any problem with the logo or name? | No copyright problem: the drawings are original SVG made by the agent for this project. A trademark search is prudent before commercial use. |
-| Any problem with a download module? | Not a licence problem, but a terms/copyright risk of that module's feature. Document it there; keep it opt-in. The open player contains no downloader. |
-| If I publish a built image? | Add the notices and the source offer for mpv (GPL-3+), ffmpeg (GPL-2+) and the LGPL libraries. |
-| If I include SongRec? | It is GPL-3.0+ and must keep that licence; keep it a separate program and do not bundle it into `application/`. |
+| Any problem with the optional import module? | **Yes, if it is distributed.** Bundled in-process as sourceless byte-code it is part of a GPL combined work and needs complete source under GPL-compatible terms. The published `.deb` therefore excludes it and the release script enforces that. A private local build is not a distribution. |
+| Any problem with the current screenshots? | The two full-lyric screenshots were removed from the tree and the rewritten history (§6). Keep real lyric text out of future screenshots. |
+| If I publish a built image? | Add the notices and the source offer for mpv (GPL-3+), ffmpeg (GPL-2+), PyAV's bundled FFmpeg and the LGPL libraries. |
+| If I include SongRec? | It is GPL-3.0+ and must keep that licence; keep it a separate program and do not bundle it into the app tree. |
 
-The practical release recipe is therefore: publish `application/` under
+The practical release recipe is therefore: publish the root repository under
 GPL-3.0-or-later with `LICENSE`, `NOTICE`, `README.md`, this audit and the
-architecture page; never commit the library, the journals, the databases or the
-secrets; ship the image as a build recipe rather than a binary blob, or add the
-notices if you do ship it.
+architecture page; upload only a module-free `.deb` built by
+`publish-release.sh`; never commit the library, the journals, the databases or
+the secrets; replace the lyric screenshots; and ship the image as a build
+recipe rather than a binary blob, or add the notices if you do ship it.
 
 ---
 
-## 8. Authorship and AI assistance
+## 9. Authorship and AI assistance
 
 The project was built in a pair-programming loop with a large language model
 acting as a coding agent (OpenCode driving a chat model). The human author —
@@ -239,7 +335,7 @@ do and it is not a legal person.
 Why this is written down rather than hidden:
 
 - **Honesty.** A reader evaluating the code deserves to know how it came to
-  be, and “written by a model in a few days” changes how much trust to place
+  be, and "written by a model in a few days" changes how much trust to place
   in it. The GPL's warranty disclaimer is not a formality here.
 - **Copyright.** In the US and several other jurisdictions, material generated
   by a model without human authorship cannot itself be copyrighted

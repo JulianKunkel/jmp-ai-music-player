@@ -461,9 +461,10 @@
       <tr><td><code>ffmpeg</code> / <code>ffprobe</code></td>
           <td>probing, decoding, waveform and spectrum, mood and profile
               measurements, import checks</td><td>subprocess</td></tr>
-      <tr><td><code>the import fetcher</code> <em>(module)</em></td>
-          <td>search and audio import — only in a build with a download module</td>
-          <td>subprocess</td></tr>
+      <tr><td>optional import module</td>
+          <td>search and audio import — only in a build that adds the module;
+              the open package contains no module</td>
+          <td>separate build-time package</td></tr>
       <tr><td>faster-whisper</td><td>local lyric and voice transcription</td>
           <td>own ASR venv, subprocess</td></tr>
       <tr><td><code>docker</code>/<code>podman</code></td>

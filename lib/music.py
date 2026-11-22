@@ -4,8 +4,8 @@
 This is the user-facing front end: it plays the library, searches it, edits
 playlists, adds new files and rebuilds the mood lists.  It works on the host
 and inside the container — both only need the repository mounted and an mpv
-binary.  A build with an optional download module also reaches that module's
-queue; the open player has no download feature.
+binary.  A build with an optional import module also reaches that module's
+queue; the open player has no import feature.
 
     music-cli play Artists/Die_Ärzte/.../01_Song.mp3
     music play Bands                     # a playlist by name
@@ -17,7 +17,7 @@ queue; the open player has no download feature.
     music status
     music search "chill piano" --limit 10
     music pl list | show Mix | add Mix --track PATH | remove Mix --index 2
-    music import URL                         # optional download module
+    music import URL                     # optional import module
     music add ~/Downloads/song.flac      # tag + file a local file
     music mood | mood list | mood build | mood play chill
     music index                          # rescan + rebuild playlists
@@ -213,7 +213,7 @@ def banner() -> None:
     print("  music play <path|playlist|search>   music search <words>")
     print("  music pause|resume|next|prev|stop   music status")
     print("  music pl list                       music mood list")
-    print("  music import <url>                      music add <file>")
+    print("  music import <url>                  music add <file>")
     print("  music index                         music verify")
     print("  written with AI assistance · GPL-3.0-or-later · see NOTICE")
     print()
@@ -324,8 +324,8 @@ def cmd_pl(args) -> int:
     return run("playlist_edit.py", args.rest)
 
 
-def cmd_yt(args) -> int:
-    """Hand the import to the optional download module, if this build has one."""
+def cmd_import(args) -> int:
+    """Hand the import to the optional import module, if this build has one."""
     from chat import downloads
     return downloads.run_importer(ROOT, list(args.rest))
 
@@ -437,16 +437,16 @@ def cmd_shell(args) -> int:
 # ---------------------------------------------------------------------------
 
 
-PASSTHROUGH = {"pl": cmd_pl, "import": cmd_yt, "yt": cmd_yt, "add": cmd_add,
-               "data": cmd_data}
+PASSTHROUGH = {"pl": cmd_pl, "import": cmd_import, "yt": cmd_import,
+               "add": cmd_add, "data": cmd_data}
 
 
 def split_passthrough(argv: list[str]) -> tuple[list[str], str | None, list[str]]:
-    """Split `pl`/`import`/`add`/`data` off so their own flags reach the real tool.
+    """Split `pl`/`import`/`add`/`data` off so their flags reach the real tool.
 
-    `argparse` would reject `music import --dry-run URL` (an unknown option of the
-    subparser) and would eat `--track` the same way, so everything after the
-    command goes through verbatim.
+    `argparse` would reject `music import --dry-run URL` (an unknown option of
+    the subparser) and would eat `--track` the same way, so everything after
+    the command goes through verbatim.
     """
     index = 0
     while index < len(argv):
@@ -484,9 +484,9 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""three subcommands hand their arguments straight to another tool,
 so every option of that tool works unchanged:
-  music pl  ...    -> application/lib/playlist_edit.py --help
-  music import  ...    -> the installed download module's importer --help
-  music add ...    -> application/lib/add_file.py --help
+  music pl     ... -> application/lib/playlist_edit.py --help
+  music import ... -> the installed import module's importer --help
+  music add    ... -> application/lib/add_file.py --help
   music data ...   -> scripts/library_data.py --help""")
     ap.add_argument("--socket", default=None, help="mpv IPC socket")
     sub = ap.add_subparsers(dest="command")

@@ -117,13 +117,25 @@ if ! git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; t
 fi
 
 # -- the package -----------------------------------------------------------
+# The GitHub asset is the open build.  Clear JMP_MODULES and pass --no-modules
+# so a local module checkout can never enter this .deb, then inspect the
+# package before anything is uploaded.
 DEB="dist/jmp-ai-music-player_${VERSION}-1_all.deb"
 if [ "$DO_BUILD" = 1 ]; then
     [ -x ./build-deb.sh ] || die "build-deb.sh is missing or not executable"
-    say "building   : $DEB"
-    ./build-deb.sh >/dev/null || die "build-deb.sh failed"
+    say "building   : $DEB (no optional modules)"
+    JMP_MODULES= ./build-deb.sh --no-modules >/dev/null \
+        || die "build-deb.sh failed"
 fi
 [ -f "$DEB" ] || die "$DEB is missing — run ./build-deb.sh (or drop --no-build)"
+have dpkg-deb || die "dpkg-deb is missing — install dpkg-dev to verify the package"
+
+# A published release must contain neither a compiled module tree nor cached
+# byte-code.  Both would be sourceless code in the asset.
+if dpkg-deb --contents "$DEB" | grep -Eq '(^|/)lib/modules/|\.py[co]$|(^|/)jmp_download/'; then
+    die "refusing to publish $DEB: it contains an optional module or byte-code payload"
+fi
+say "checked    : no optional module payload"
 SUM=$(sha256sum "$DEB" | awk '{print $1}')
 printf '%s  %s\n' "$SUM" "$(basename "$DEB")" > "$DEB.sha256"
 say "package    : $DEB ($(du -h "$DEB" | cut -f1))"
@@ -156,10 +168,9 @@ music-cli chat --web
 
 - Depends: \`python3\` (>= 3.10), \`python3-mutagen\`, \`python3-numpy\`, \`mpv\`, \`ffmpeg\`
 - Recommends: \`python3-gi\`, \`gir1.2-gtk-3.0\`, \`gir1.2-webkit2-4.1\`, \`python3-textual\`
-- Suggests: \`the import fetcher\` (only for a build with a download module)
 
-The package contains **no download feature**.  Only builds that compile an
-optional download module add one.
+The package contains **no optional import module** and no compiled module
+payload.  A module is only added by a separate, local build.
 
 SHA-256: \`$SUM\` (also published as \`$(basename "$DEB").sha256\`).
 

@@ -150,7 +150,7 @@ forms are shown where they differ in structure.
 | **Sound, mood and rank** | "find the slowest and boring song", "the 10 most aggressive tracks", "why is this the most aggressive?", "find music similar to this but faster", "find something 20 % faster", "show the timbre profile", "find the most bass-heavy song", "show the psycho families", "is the radio on?", "start a radio from this song", "more radio", "keep the music going", "never stop the music" |
 | **Lyrics** | "show the lyrics", "songs about the sea", "which song mentions pizza", "how many songs mention pizza", "export the lyrics as lrc", "shift the lyrics half a second later", "the lyrics are too early", "how many songs have lyrics" |
 | **Your library as data** | "how many tracks do I have", "which genres do I have most of", "what formats do I have", "the longest track", "what did I add this month", "what's new", "how complete is the library", "is the library healthy", "show duplicate 3", "library statistics" |
-| **Import** *(optional module)* | "search the import source for <words>", "download 2", "download all", "retry the download", "clear the failed download", "add <url> to my library" — these need a build with a download module; without one the chat says so |
+| **Import** *(optional module)* | "search the import source for <words>", "download 2", "download all", "retry the download", "clear the failed download", "add <url> to my library" — these need a build with an import module; without one the chat says so |
 | **Playlist import** | "import all playlists from ~/Downloads/playlists", "import this spotify playlist <link>" |
 | **Settings and upkeep** | "show the settings", "turn off the visualizer", "turn off the daily backup", "keep the last 5 backups", "use gwdg with api key sk-…", "change the music folder to /home/me/Musik", "index the library", "pause the indexing", "measure the library", "transcribe all songs without lyrics" |
 | **Feedback and learning** | "I like this", "I don't like this", "das gefällt mir", "when I say sunday I mean chill and jazz", "that worked, remember it" |
@@ -163,7 +163,7 @@ decodability first.
 
 ## What it looks like
 
-Three things the window does, captured from a running library of ~17,500
+Two things the window does, captured from a running library of ~17,500
 tracks.  Nothing is mocked up: the numbers, lyrics and results come from the
 library the window was pointed at.
 
@@ -180,17 +180,6 @@ lines a song actually sings — so “chill” finds `Mood_Chill`, the tracks ta
 that way, and the songs whose words say so.
 
 ![The search window for “chill”: one playlist, 25 track hits and 3 lyric lines, grouped as Playlists, Tracks and Lyrics](docs/screenshots/search.png)
-
-**A playlist that comes from the words and the sound.**  “songs about the sea
-that are calm” searches the timed lyrics and finds the songs that really sing
-about the sea — Aqua’s *We Belong to the Sea* comes first with five lines
-(×5), while a song that merely passes through “seaside” no longer counts.
-Those hits are then ordered by the measured *Calmness* axis and explained
-(“sound 0.27”); “save that as Calm Seas” writes an ordinary
-`Playlists/Custom/Calm_Seas.m3u8` that every other player can read — and it
-appears in the sidebar like any hand-made list.  The same screenshot shows
-the lyrics panel following the playing line.
-
 
 ## Install on this computer
 
@@ -341,7 +330,7 @@ music-cli seek +30 | vol 65
 music-cli search "chill piano"
 music-cli chat "create a smooth playlist for work"
 music-cli pl list | show Mix | add Mix --track PATH | remove Mix --index 2
-music-cli import https://example.invalid/…        # needs an optional download module
+music-cli import <link>                # needs an optional import module
 music-cli add ~/Downloads/song.flac    # tag + file + index
 music-cli mood list | mood play chill | mood build
 music-cli index                       # rescan + rebuild the generated lists
@@ -460,9 +449,9 @@ is no new Python dependency.
   (`Ctrl+Shift+V`), transcribes it locally and sends the words — see *Voice
   input* below.
 - **Downloads** are optional.  The open player never downloads audio; a build
-  that compiles a download module (see [`docs/modules.md`](docs/modules.md))
-  adds an **Import** button and the matching chat sentences ("search the import source
-  for …", "download 2", "download all").  Without a module the button is hidden,
+  that compiles an import module (see [`docs/modules.md`](docs/modules.md))
+  adds an **Import** button and the matching chat sentences ("search the
+  import source for …", "download 2", "download all").  Without a module the button is hidden,
   the tool list has no download tools, and the chat answers that this build has
   none.  Everything else in this page works either way.
 - **Search** (`Ctrl+F`) opens one box that matches any part of the title,
@@ -498,7 +487,13 @@ is no new Python dependency.
   observation); `jmp-media-keys --install` registers the same four keys as
   GNOME global shortcuts calling `music-cli`, so they work in every
   application — at the cost of taking `F5`–`F8` from other applications
-  (`jmp-media-keys --remove` gives them back).
+  (`jmp-media-keys --remove` gives them back).  The same install is in the
+  window: **Settings → Playback → Global media keys** shows each key as
+  *global* or *window only* and installs or removes the bindings in one click
+  (the native window performs the desktop calls, since the server runs in a
+  container without a session bus).  One toast at start says the keys are
+  focus-only, and the first real key press offers the setup once with the
+  tradeoff in plain words; nothing is installed silently.
 - **Profile** opens the sound net diagram of the current song: the twelve
   measured axes as a radar polygon, a slider per axis, the grouped
   measurements (rhythm, loudness, timbre, tonality, bands and space) in a
@@ -800,10 +795,7 @@ The words are transcribed **on this machine**: `lib/asr/transcribe_lyrics.py`
 timed lines in `library-work/app/lyrics/lyrics.db` (SQLite with an FTS5 index)
 and nothing is uploaded — no lyrics site, no cloud API.  The panel marks the
 line being sung and the chat can search the words, quote them and build a
-playlist from them:
-
-
-The search matches **whole words**, not substrings: “songs about the sea” finds
+playlist from them.  The search matches **whole words**, not substrings: “songs about the sea” finds
 songs that sing *sea* or *seas*, not songs that contain “seaside” or “search”.
 Every requested word must appear when possible, songs that return to a word
 rank above one passing mention (the chat shows the count, `×5`), a word in the
@@ -1101,9 +1093,9 @@ julians-music-app:latest`).
   without `scripts/` can play, search and use playlists, but not tag new files.
 - `music-cli mood build` re-analyses new files only (the feature cache is keyed
   by path, size and mtime).
-- A download module brings its own `requirements.txt` (for the reference
-  module, `the import fetcher`), installed by the same build step.  The open app installs
-  no downloader at all and never asks for one.
+- An import module brings its own `requirements.txt`, installed by the same
+  build step.  The open app installs no downloader at all and never asks for
+  one.
 - The repository's `scripts/venv` is never used inside the image: it is built
   for the host interpreter.
 - Tests: `tests/chat-tests.py` builds a throwaway library under

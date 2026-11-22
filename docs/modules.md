@@ -9,6 +9,15 @@ The open app is complete without a module: playback, search, playlists,
 lyrics, the sound profile and every background job work unchanged, and the
 window simply shows no import button.
 
+**Release rule.** The `.deb` uploaded to GitHub is always the open build.
+`publish-release.sh` clears `JMP_MODULES`, calls `build-deb.sh --no-modules`,
+and refuses to upload a package that contains `lib/modules/` or cached
+byte-code. `build-deb.sh` repeats the check before it writes the checksum, and
+`build-image.sh` / `install.sh` only include a module when `--modules` is
+passed explicitly. A module build is for local use; see
+[`licences.md`](licences.md#5-the-optional-import-module-and-the-gpl) before
+distributing one.
+
 ## How a module reaches the app
 
 ```
@@ -51,7 +60,7 @@ download feature.
 
 ## Discovery at runtime
 
-`lib/chat/downloads.py` is the only download surface of the open app and the
+`lib/chat/downloads.py` is the only import surface of the open app and the
 facade every host call site uses.  It
 loads the provider package named by the `JMP_DOWNLOAD_MODULE` environment
 variable (default `jmp_download`), searching these directories in order:

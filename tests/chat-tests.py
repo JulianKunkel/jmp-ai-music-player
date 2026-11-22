@@ -1360,10 +1360,10 @@ def check_downloads(work: Path) -> None:
             reply = engine.handle("search youtube for portishead")
             text = clean_text(reply)
             check("chat refuses downloads without a module",
-                  "no download module" in text.lower(), text[:300])
+                  "no import module" in text.lower(), text[:300])
             reply = engine.handle("add https://example.invalid/abc to my library")
             check("a direct link is refused the same way",
-                  "no download module" in clean_text(reply).lower(),
+                  "no import module" in clean_text(reply).lower(),
                   clean_text(reply)[:300])
             specs = {spec["function"]["name"]
                      for spec in Toolbox(engine).specs()}
@@ -1392,6 +1392,12 @@ def check_downloads(work: Path) -> None:
                       and planned.skill == "import-audio"
                       and planned.args.get("action") == action,
                       str(planned)[:200])
+            planned = nlu_plan("search the import source for portishead",
+                               engine.ctx, engine.catalog)
+            check("the abstract import wording plans a search",
+                  planned is not None and planned.skill == "import-audio"
+                  and planned.args.get("query") == "portishead",
+                  str(planned)[:200])
             planned = nlu_plan("move the download up", engine.ctx,
                                engine.catalog)
             check("a reorder sentence keeps its direction",

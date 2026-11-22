@@ -23,7 +23,7 @@ WITH_CLEMENTINE=0
 NO_CACHE=0
 DRY_RUN=0
 DOCKER_BIN="${DOCKER:-}"
-MODULES="${JMP_MODULES:-$HERE/download-modules}"
+MODULES="${JMP_MODULES:-}"
 
 usage() {
     sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
@@ -57,6 +57,7 @@ fi
 
 CMD=("$DOCKER_BIN" build -f "$HERE/Dockerfile" -t "$TAG")
 [ "$WITH_CLEMENTINE" = "1" ] && CMD+=(--build-arg WITH_CLEMENTINE=true)
+[ -n "$MODULES" ] && [ -d "$MODULES" ] && CMD+=(--build-arg WITH_MODULES=1)
 [ "$NO_CACHE" = "1" ] && CMD+=(--no-cache)
 CMD+=("$HERE")
 

@@ -978,9 +978,16 @@ def plan(text: str, ctx: Context, catalog, profile=None) -> Plan | None:
             return Plan("add-file", args, confidence=0.9)
         return Plan("play-music", {"target": paths[0]}, confidence=0.7)
 
-    # -- the import source: search, then download a chosen result --------------------
+    # -- audio import: search, then fetch a chosen result ------------------
 
     yt_named = _has(f, "youtube", "you tube", "yt")
+    import_named = _has(f, "import module", "import source", "download module",
+                        "download source", "import queue", "importmodul",
+                        "importquelle", "downloadmodul", "downloadquelle")
+    import_search = import_named or (
+        _has(f, "search", "find", "look", "suche", "finde", "such")
+        and _has(f, "to import", "to download", "zum importieren",
+                 "zum herunterladen"))
 
     if f in {"downloads", "download status", "download queue",
              "download progress", "youtube downloads", "import status",
@@ -1030,7 +1037,7 @@ def plan(text: str, ctx: Context, catalog, profile=None) -> Plan | None:
                                    "last", "back", "runter", "hinten")
                      else "up")
         return Plan("import-audio", {"action": "move",
-                                       "direction": direction}, confidence=0.85)
+                                     "direction": direction}, confidence=0.85)
 
     pending = bool(getattr(ctx, "last_youtube", None))
     wants_download = _has(
@@ -1038,11 +1045,12 @@ def plan(text: str, ctx: Context, catalog, profile=None) -> Plan | None:
         "download number", "download no", "download the first",
         "download the second", "download the third", "download all",
         "grab it", "get it", "import it", "integrate it", "integrate that",
+        "import number", "import all", "import the first",
         "add it to my library", "add that to my library",
         "lade es herunter", "lade das herunter", "herunterladen",
         "integriere das", "integriere es", "nimm das", "hole das")
     if pending and (wants_download or (
-            re.search(r"(?:^|\s)download(?:\s|$)", f)
+            re.search(r"(?:^|\s)(?:download|import)(?:\s|$)", f)
             and (_ordinal(original) is not None
                  or re.search(r"(?<!\w)\d{1,2}(?!\w)", original)))):
         index = None
@@ -1065,8 +1073,9 @@ def plan(text: str, ctx: Context, catalog, profile=None) -> Plan | None:
             args["artist"] = artist.group(1).strip(" .'\"")
         return Plan("import-audio", args, confidence=0.9)
 
-    if yt_named and _has(f, "search", "find", "look", "suche", "finde", "such",
-                         "similar", "ähnliche", "aehnliche"):
+    if (yt_named or import_search) \
+            and _has(f, "search", "find", "look", "suche", "finde", "such",
+                     "similar", "ähnliche", "aehnliche"):
         query = ""
         for pattern in (
                 r"(?:search|find|look)\s+(?:on|in|at)?\s*(?:youtube|you tube|yt)"
@@ -1074,10 +1083,18 @@ def plan(text: str, ctx: Context, catalog, profile=None) -> Plan | None:
                 r"(?:youtube|you tube|yt)\s+(?:search|find)\s+(?:for\s+)?(.+)$",
                 r"(?:search|find|look)\s+(?:for\s+)?(.+?)\s+(?:on|in)\s+"
                 r"(?:youtube|you tube|yt)$",
+                r"(?:search|find|look)\s+(?:the\s+)?(?:import|download)\s+"
+                r"(?:module|source)\s+(?:for\s+)?(.+)$",
+                r"(?:search|find|look)\s+(?:for\s+)?(.+?)\s+to\s+"
+                r"(?:import|download)$",
                 r"(?:suche|finde|such)\s+(?:auf\s+)?(?:youtube|you tube|yt)"
                 r"\s+(?:nach\s+)?(.+)$",
                 r"(?:youtube|you tube|yt)\s+(?:suche|finde)\s+(?:nach\s+)?(.+)$",
-                r"(?:suche|finde)\s+(.+?)\s+auf\s+(?:youtube|you tube|yt)$"):
+                r"(?:suche|finde)\s+(.+?)\s+auf\s+(?:youtube|you tube|yt)$",
+                r"(?:suche|finde|such)\s+(?:im\s+)?(?:import|download)"
+                r"(?:modul|quelle)?\s+(?:nach\s+)?(.+)$",
+                r"(?:suche|finde)\s+(.+?)\s+(?:zum\s+)?"
+                r"(?:importieren|herunterladen)$"):
             match = _rx(pattern, original)
             if match:
                 query = match.group(1)

@@ -17,7 +17,7 @@ Two sources, one path into the library:
 
 Nothing streams from Spotify; the import only *names* the tracks.  Entries the
 library does not hold are reported, so they can be fetched with the normal
-the import source import.
+audio import module.
 
 Writes only through `playlist_edit.write_custom()`, so every new list is
 journalled to `library-work/journal/playlists.jsonl` before it appears and

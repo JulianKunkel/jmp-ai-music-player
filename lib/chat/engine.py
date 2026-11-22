@@ -490,7 +490,7 @@ class Engine:
                          f"**{VIZ_STYLES[current]}**.\n\n"
                          f"`/viz on`, `/viz off`, or one of {styles}.",
                          tool="viz")
-        if command in {"yt", "youtube"}:
+        if command in {"import", "yt", "youtube"}:
             return self._execute(Plan("import-audio", {"url": rest},
                                       source="slash"), text)
         if command in {"add", "file"}:
@@ -3184,9 +3184,9 @@ class Engine:
     def skill_import(self, args: dict, request: str) -> Reply:
         if not youtube.available(self.root):
             return Reply(
-                "This build has no download module installed, so it cannot "
+                "This build has no import module installed, so it cannot "
                 "search or import audio.  The player itself always works "
-                "without one; a build that includes an optional download "
+                "without one; a build that includes an optional import "
                 "module adds the feature under Settings or the module's own "
                 "entry point.",
                 error=True, tool="import-audio · unavailable")
@@ -3315,7 +3315,7 @@ class Engine:
                  if re.match(r"^https?://", link, re.IGNORECASE)]
         if not links:
             return Reply("Give me a full link "
-                         "(`https://example.invalid/…`).", error=True)
+                         "(`https://…`).", error=True)
         if self.dry_run:
             names = ", ".join(f"`{link}`" for link in links[:4])
             more = f" and {len(links) - 4} more" if len(links) > 4 else ""
@@ -3432,7 +3432,7 @@ class Engine:
         if attempts:
             body += (f"\n\nThe earlier attempt"
                      f"{'s are' if attempts != 1 else ' is'} kept in "
-                     "`library-work/app/chat/youtube/`.")
+                     "`library-work/app/chat/`.")
         return Reply(body, tool="import-audio · retry")
 
     def _youtube_dismiss(self) -> Reply:
@@ -3449,7 +3449,7 @@ class Engine:
         name = _escape(_short(str(state.get("display") or state.get("url")
                                   or "the download"), 70))
         return Reply(f"Cleared **{name}** from the footer. The job and its log "
-                     "stay in `library-work/app/chat/youtube/`, so “download "
+                     "stay in `library-work/app/chat/`, so “download "
                      "status” still lists it.", tool="import-audio · dismiss")
 
     def _youtube_status(self) -> Reply:
@@ -3459,13 +3459,14 @@ class Engine:
             return Reply(f"Could not read the download queue: {exc}",
                          error=True)
         if not records:
-            return Reply("No audio imports yet. Say “search the import source for …” "
-                         "and then “download 1”.", tool="import-audio · status")
+            return Reply("No audio imports yet. Search the import source, "
+                         "then say “download 1”.",
+                         tool="import-audio · status")
         lines = []
         for record in records[:10]:
             state = youtube.status_line(record)
             detail = str(record.get("summary") or "").strip()
-            name = str(record.get("display") or record.get("url") or "the import source")
+            name = str(record.get("display") or record.get("url") or "import")
             ago = self._ago(str(record.get("created") or ""))
             extra = f" · {_short(detail, 80)}" if detail else ""
             lines.append(f"- `{state}` · **{_escape(_short(name, 70))}**"
@@ -3582,9 +3583,9 @@ class Engine:
                    f"`Playlists/Custom/` · {found:,} of {total:,} entries "
                    "matched locally.")
         if total and found < total:
-            summary += ("\n\nSay “search the import source for <artist> <title>” to fetch "
-                        "a missing track; the import then adds it to the list "
-                        "on the next run.")
+            summary += ("\n\nSay “search the import source for <artist> <title>” "
+                        "to fetch a missing track; the import then adds it to "
+                        "the list on the next run.")
         return Reply(summary + "\n\n" + body, tool="import-playlist")
 
     # -- skills: learning --------------------------------------------------

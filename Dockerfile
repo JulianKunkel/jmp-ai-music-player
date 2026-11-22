@@ -70,12 +70,18 @@ RUN groupadd -g "${USER_GID}" music 2>/dev/null || groupadd music \
 # the app itself: code only, no library, no venv, no caches
 COPY lib /opt/music/app
 
-# Optional download modules.  `.build-modules` is empty in the open checkout;
-# build-image.sh / install.sh stage a closed module checkout there.  The build
-# script compiles each package and ships sourceless byte-code in lib/modules,
-# so a build without modules simply has no download feature.
+# Optional import modules.  `.build-modules` is empty in the open checkout;
+# build-image.sh / install.sh stage a module checkout there and pass
+# WITH_MODULES=1.  A stale staging folder must never leak into an image by
+# accident, so the build refuses it unless the opt-in is explicit.
+ARG WITH_MODULES=0
 COPY build-modules.py /opt/music/build-modules.py
 COPY .build-modules /build/modules
+RUN if [ "$WITH_MODULES" != "1" ] \
+       && [ -n "$(find /build/modules -mindepth 1 ! -name .keep -print -quit)" ]; then \
+      echo "error: .build-modules is not empty; pass --build-arg WITH_MODULES=1 for an intentional module build" >&2; \
+      exit 1; \
+    fi
 RUN /opt/music/venv/bin/python /opt/music/build-modules.py \
       --modules /build/modules \
       --dest /opt/music/app/modules \

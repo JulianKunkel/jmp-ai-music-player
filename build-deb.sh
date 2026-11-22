@@ -3,6 +3,7 @@
 #
 #   ./build-deb.sh                        # version from VERSION, output in dist/
 #   ./build-deb.sh --version 1.0.1        # override the version
+#   ./build-deb.sh --no-modules           # force the open build (release)
 #   ./build-deb.sh --modules /path/to/modules
 #   ./build-deb.sh --out /tmp/release
 #
@@ -29,14 +30,15 @@ MODULES=${JMP_MODULES:-}
 KEEP_WORK=0
 
 usage() {
-    sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
     cat <<EOF
 
 options:
   --version X.Y.Z    package version (default: $(cat "$HERE/VERSION" 2>/dev/null || echo 1.0.0))
   --revision N       Debian revision (default: 1)
   --out DIR          where the .deb is written (default: $HERE/dist)
-  --modules DIR      optional download-module checkout to compile in
+  --modules DIR      optional module checkout to compile in (local builds)
+  --no-modules       ignore $JMP_MODULES and build the open package
   --keep             keep the staging tree under build/deb/
   -h, --help         this help
 EOF
@@ -50,6 +52,7 @@ while [ $# -gt 0 ]; do
         --revision) REVISION=${2:?--revision needs a value}; shift 2 ;;
         --out) OUT=${2:?--out needs a directory}; shift 2 ;;
         --modules) MODULES=${2:?--modules needs a directory}; shift 2 ;;
+        --no-modules) MODULES=""; shift ;;
         --keep) KEEP_WORK=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "unknown argument: $1" ;;
@@ -160,7 +163,6 @@ Maintainer: $MAINTAINER
 Installed-Size: $SIZE
 Depends: python3 (>= 3.10), python3-mutagen (>= 1.46), python3-numpy, mpv, ffmpeg
 Recommends: python3-gi, gir1.2-gtk-3.0, gir1.2-webkit2-4.1, python3-textual
-Suggests: the import fetcher
 Section: sound
 Priority: optional
 Homepage: $HOMEPAGE
@@ -195,6 +197,14 @@ export SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(git -C "$HERE" log -1 --format=%
 DEB="$OUT/${PKG}_${DEBVERSION}_all.deb"
 rm -f "$DEB"
 dpkg-deb --root-owner-group -Zxz --build "$STAGE" "$DEB" >/dev/null
+
+# The open package must never carry a module tree or cached byte-code.  This
+# is the same gate publish-release.sh applies to the uploaded asset.
+if [ -z "$MODULES" ] \
+   && dpkg-deb --contents "$DEB" | grep -Eq '(^|/)lib/modules/|\.py[co]$'; then
+    rm -f "$DEB"
+    die "open build contains a module tree or byte-code: $DEB"
+fi
 ( cd "$OUT" && sha256sum "$(basename "$DEB")" > "$(basename "$DEB").sha256" )
 
 [ "$KEEP_WORK" = 1 ] || rm -rf "$WORK"

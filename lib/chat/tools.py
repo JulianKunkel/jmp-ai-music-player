@@ -33,7 +33,8 @@ DELETE_WORDS = ("delete", "remove", "drop", "get rid of", "throw away",
                 "loeschen", "löschen", "entfernen", "wegwerfen", "schmeiss",
                 "schmeiß", "rauswerfen", "aufraeumen", "aufräumen")
 
-#: new audio enters the library through the import module, and only when asked for
+#: new audio enters the library through the import module, and only
+#: when the listener asks for it
 DOWNLOAD_WORDS = ("download", "import", "grab", "herunterladen", "runterladen",
                   "lade", "laden", "hole", "hol", "besorg", "integrate")
 
@@ -230,13 +231,13 @@ class Toolbox:
                  {"action": {"type": "string"},
                   "value": {"type": "number"}}, ["action"]),
             tool("import_search",
-                 "Search the installed download module without downloading. Returns "
+                 "Search the installed import module without fetching. Returns "
                  "numbered hits with url, title and channel.",
                  {"query": {"type": "string"},
                   "count": {"type": "integer", "default": 6}}, ["query"]),
             tool("import_download",
-                 "Download a hit from the last download-module search into the "
-                 "library. Needs a download/import request from the listener. "
+                 "Fetch a hit from the last import-module search into the "
+                 "library. Needs an import/download request from the listener. "
                  "The installed module tags and files it with a journal.",
                  {"indexes": {"type": "array", "items": {"type": "integer"}},
                   "all": {"type": "boolean"},

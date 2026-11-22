@@ -317,8 +317,8 @@ class LLM:
 
         Unlike :meth:`plan` the model may look things up before it answers: it
         gets the tool surface from ``chat/tools.py`` (catalogue search, the
-        profile database, playlists, the import source) and every call is executed by the
-        app's own validated handlers.  There is no tool that deletes, moves or
+        profile database, playlists, the optional import module) and every call
+        is executed by the app's own validated handlers.  There is no tool that deletes, moves or
         retags a music file.
 
         A provider that does not understand ``tools`` is detected once
@@ -433,13 +433,13 @@ What you can do:
 - show a track's twelve measured axes and find similar tracks
 - list, show, create, edit, rename and delete custom playlists
 - play music and control the player
-- search the import source, and import a hit into the library
+- search the optional import module, and import a hit into the library
 
 Hard rules — these are not negotiable:
 - A music file can never be deleted, moved or retagged. No tool does that; do
   not claim otherwise.
-- New audio only enters through the import module, and only when the listener asks for a
-  download/import.
+- New audio only enters through the optional import module, and only when the
+  listener asks for an import.
 - The shelf, mood, focus and psycho playlists are generated from the library:
   never edit or delete them, only `custom` lists.
 

@@ -107,7 +107,7 @@ REGISTRY: dict[str, dict] = {
     "import-audio": {
         "title": "Import audio (optional module)",
         "args": {"action": "search|download|status", "query": "what to look for",
-                 "url": "video URL", "indexes": "result numbers",
+                 "url": "link", "indexes": "result numbers",
                  "all": "every hit", "count": "how many hits",
                  "similar": "use the current track", "artist": "override",
                  "album": "override", "genre": "override"},

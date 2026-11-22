@@ -71,7 +71,7 @@ IMAGE="julians-music-app:latest"
 BUILD_IMAGE=1
 DOCKER_BIN="${DOCKER:-}"
 LLM_CONFIG=""
-MODULES="${JMP_MODULES:-$HERE/download-modules}"
+MODULES="${JMP_MODULES:-}"
 SYSTEM_DEPS=1
 FALLBACK_HOST=0
 LAUNCH=auto
@@ -652,7 +652,10 @@ if [ "$TARGET" = "docker" ] \
     fi
     stage_modules
     say "Building $IMAGE"
-    "$DOCKER_BIN" build -f "$HERE/Dockerfile" -t "$IMAGE" "$HERE"
+    build_args=()
+    [ -d "$MODULES" ] && build_args+=(--build-arg WITH_MODULES=1)
+    "$DOCKER_BIN" build -f "$HERE/Dockerfile" -t "$IMAGE" \
+        "${build_args[@]}" "$HERE"
 fi
 
 if [ "$TARGET" = "host" ] && ! have "$PYTHON"; then
@@ -684,7 +687,7 @@ if ! is_library "$LIBRARY"; then
     say "         commands need a prepared library."
 fi
 if [ "$TARGET" = "host" ] && [ ! -f "$LIBRARY/scripts/tag_fields.py" ]; then
-    say "  [warn] no scripts/ pipeline there: 'add' and 'yt' cannot tag."
+    say "  [warn] no scripts/ pipeline there: 'add' and 'import' cannot tag."
 fi
 
 do_it mkdir -p "$APP_DIR" "$BIN_HOME"

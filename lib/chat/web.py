@@ -1879,7 +1879,7 @@ class ChatService:
         candidates = []
         for item in fresh:
             # one metadata call keeps the job record readable and the artist
-            # real; a link the import fetcher cannot read still gets queued and reports
+            # real; a link the fetcher cannot read still gets queued and reports
             candidates.append(youtube.probe(item, timeout=30) or {"url": item})
         try:
             started = youtube.start(
@@ -1947,7 +1947,7 @@ class ChatService:
             jobs.append({
                 "id": str(record.get("id") or ""),
                 "label": str(record.get("display")
-                             or record.get("url") or "the import source"),
+                             or record.get("url") or "import"),
                 "channel": str(record.get("channel") or ""),
                 "url": str(record.get("url") or ""),
                 "artist": str(record.get("artist") or ""),
