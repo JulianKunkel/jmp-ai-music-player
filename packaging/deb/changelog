@@ -16,13 +16,15 @@ jmp-ai-music-player (1.2.5-1) unstable; urgency=medium
     in the plain REPL as [label].  That is what makes the planner order visible:
     offline parser first, then a taught phrase, then the language model.
   * A dead end is handed to the model.  When the offline plan matches but finds
-    nothing ("Nothing matches …") and a language model is configured, the model
-    is asked after all instead of the chat stopping at a hint; without a model
-    the hint stays.  `/llm` still prints the full planner state.
+    nothing — "Nothing matches …" from a play, "No tracks match …" from a
+    search, an empty mood selection — and a language model is configured, the
+    model is asked after all instead of the chat stopping at a hint; without a
+    model the hint stays.  `/llm` still prints the full planner state.
   * The language-model tool surface gained `describe_formats` with the same
     answer, so an attached model cannot invent a different one.
-  * +30 headless checks (check_formats, the dead-end rescue and the planner
-    labels in check_agent, the planner field of /api/chat).
+  * New headless checks: check_formats, the play and search dead-end rescue
+    and the planner labels in check_agent, and the planner field of
+    /api/chat.
 
  -- Julian Kunkel <julian@kunkel.de>  Sun, 22 Nov 2026 18:00:00 +0100
 

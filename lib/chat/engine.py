@@ -96,6 +96,20 @@ def _short(text: str, limit: int = 42) -> str:
 #: a language model may still propose `play-music` out of helpfulness, but the
 #: listener asked to look, so the engine lists the hits instead of starting
 #: them.  Folded forms only: `fold()` drops the umlauts.
+#: an offline answer that found nothing.  Such a dead end is not an answer
+#: when a language model is configured, so it is handed on instead.
+DEAD_ENDS = ("nothing matches", "no tracks match", "no track title matches",
+             "i found no tracks", "i found nothing")
+
+
+def is_dead_end(reply: "Reply") -> bool:
+    """Did the offline planner answer with nothing at all?"""
+    if not reply.error:
+        return False
+    folded = fold(reply.text)
+    return any(marker in folded for marker in DEAD_ENDS)
+
+
 PLAYBACK_WORDS = ("play", "plays", "playing", "spiel", "spiele", "spielen",
                   "abspielen", "abspiel", "anhoeren", "anhören", "hoer", "hör",
                   "hoere", "höre", "queue", "shuffle", "zufaellig", "zufällig",
@@ -272,8 +286,7 @@ class Engine:
                 reply.planner = planner
                 return reply
             reply = self._execute(plan, text)
-            if (reply.error and "Nothing matches" in reply.text
-                    and self.llm.available()):
+            if is_dead_end(reply) and self.llm.available():
                 # the offline parser matched but found nothing: a dead end is
                 # not the answer, so the planner gets the sentence after all
                 rescued = self._llm_turn(text)
@@ -314,7 +327,7 @@ class Engine:
                 reply = self._agent_reply(result, toolbox)
             else:
                 return None
-        if reply.error and "Nothing matches" in reply.text:
+        if is_dead_end(reply):
             return None
         return reply
 

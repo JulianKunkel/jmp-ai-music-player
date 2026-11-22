@@ -6004,12 +6004,28 @@ def check_agent(root: Path) -> None:
               any("zzzznotatrack" in json.dumps(entry["messages"])
                   for entry in MODEL_SEEN), str(MODEL_SEEN[:1])[:200])
 
+        # a plain search miss is the same dead end ("No tracks match …")
+        MODEL_SEEN.clear()
+        reply = rescue_engine.handle("search for zzzznotatrack")
+        check("a search with no hits asks the configured planner too",
+              "not a track" in clean_text(reply), clean_text(reply)[:200])
+        check("that rescued answer is labelled as the model's",
+              reply.planner.startswith("language model"), reply.planner)
+        check("the planner saw the search sentence",
+              any("search for zzzznotatrack" in json.dumps(entry["messages"])
+                  for entry in MODEL_SEEN), str(MODEL_SEEN[:1])[:200])
+
         offline = Engine(root=root, use_llm=False, dry_run=True)
         engines.append(offline)
         reply = offline.handle("play zzzznotatrack")
         check("without a planner the offline hint stays",
               "Nothing matches" in clean_text(reply), clean_text(reply)[:200])
         check("the offline reply is labelled as local",
+              reply.planner == "local planner", reply.planner)
+        reply = offline.handle("search for zzzznotatrack")
+        check("without a planner the search miss stays too",
+              "No tracks match" in clean_text(reply), clean_text(reply)[:200])
+        check("its reply is labelled as local as well",
               reply.planner == "local planner", reply.planner)
     finally:
         for engine in engines:

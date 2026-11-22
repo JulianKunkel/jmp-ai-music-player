@@ -167,8 +167,9 @@ decodability first.
 model · model name · provider · tools* when the model did.  The order is
 offline parser → phrase you taught it → language model, so a confident offline
 match never costs a network round trip — and when an offline match ends in a
-dead end ("Nothing matches …"), the model is asked after all instead of the
-chat stopping there.  `/llm` prints the full planner state, and the settings
+dead end ("Nothing matches …", "No tracks match …", an empty mood selection),
+the model is asked after all instead of the chat stopping there.  `/llm`
+prints the full planner state, and the settings
 panel's **Language model** tab shows whether a server is configured and
 reachable.
 
