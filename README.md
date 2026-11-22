@@ -280,8 +280,8 @@ The release page carries a package built for Ubuntu 24.04 and 26.04
 <https://github.com/JulianKunkel/jmp-ai-music-player/releases>
 
 ```bash
-wget https://github.com/JulianKunkel/jmp-ai-music-player/releases/latest/download/jmp-ai-music-player_1.1.2-1_all.deb
-sudo apt install ./jmp-ai-music-player_1.1.2-1_all.deb
+wget https://github.com/JulianKunkel/jmp-ai-music-player/releases/latest/download/jmp-ai-music-player_1.1.3-1_all.deb
+sudo apt install ./jmp-ai-music-player_1.1.3-1_all.deb
 ```
 
 It installs the app under `/usr/lib/jmp`, the launcher `/usr/bin/music-cli`,
@@ -472,6 +472,13 @@ is no new Python dependency.
   list, exactly like clicking it in the sidebar or saying "play Bands".  The
   list is grouped into *Playlists* and *Tracks*, each with its size and kind,
   and a track has a second button that opens its sound profile.
+- **Media keys** work like the transport buttons: play/pause, next, previous
+  and stop.  The native GTK window publishes an **MPRIS** player
+  (`org.mpris.MediaPlayer2.jmp`), so the desktop's own media keys reach the
+  player even while the window is in the background; the focused window also
+  translates the keysyms itself.  In a browser window or on a phone the page
+  handles them while it has focus.  Every key becomes the same
+  `POST /api/transport` call as the matching button; no file is touched.
 - **Profile** opens the sound net diagram of the current song: the twelve
   measured axes as a radar polygon, a slider per axis, the grouped
   measurements (rhythm, loudness, timbre, tonality, bands and space) in a

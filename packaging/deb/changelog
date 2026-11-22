@@ -1,3 +1,14 @@
+jmp-ai-music-player (1.1.3-1) unstable; urgency=medium
+
+  * Media keys control the player: play/pause, next, previous and stop.
+    The native window publishes an MPRIS player, so the desktop's own keys
+    reach it even in the background; the focused window also handles the
+    keysyms itself, and a browser window handles them while focused.
+  * No tag, playlist or audio file is touched: every key becomes the same
+    POST /api/transport call as the matching transport button.
+
+ -- Julian M. Kunkel <julian.kunkel@gwdg.de>  Sun, 22 Nov 2026 16:20:00 +0100
+
 jmp-ai-music-player (1.1.2-1) unstable; urgency=medium
 
   * New Settings tab "Profile": see what the app learned about you — every

@@ -2521,6 +2521,50 @@ def check_window() -> None:
           installer.count("--window-size=1440,960") == 1,
           str(installer.count("--window-size=1440,960")))
 
+    # -- media keys --------------------------------------------------------
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "jmp_window_under_test", LIB / "chat" / "window.py")
+    window_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(window_module)
+
+    check("the media keys map to transport actions",
+          window_module.MEDIA_KEYS.get("XF86AudioPlay") == "toggle"
+          and window_module.MEDIA_KEYS.get("XF86AudioNext") == "next"
+          and window_module.MEDIA_KEYS.get("XF86AudioPrev") == "prev"
+          and window_module.MEDIA_KEYS.get("XF86AudioStop") == "stop",
+          str(window_module.MEDIA_KEYS))
+    server = window_module._Server("http://127.0.0.1:8765/?t=abc123")
+    check("the media bus talks to the same token-guarded server",
+          server.base == "http://127.0.0.1:8765" and server.token == "abc123",
+          f"{server.base} {server.token}")
+    check("the window owns an MPRIS player name and path",
+          window_module.MPRIS_NAME == "org.mpris.MediaPlayer2.jmp"
+          and window_module.MPRIS_PATH == "/org/mpris/MediaPlayer2",
+          window_module.MPRIS_NAME)
+    check("MPRIS exposes the player interface the desktop calls",
+          "org.mpris.MediaPlayer2.Player" in window_module.MPRIS_XML
+          and 'method name="PlayPause"' in window_module.MPRIS_XML
+          and 'method name="Next"' in window_module.MPRIS_XML
+          and 'method name="Previous"' in window_module.MPRIS_XML
+          and 'method name="Stop"' in window_module.MPRIS_XML,
+          window_module.MPRIS_XML[:200])
+    check("both backends register the media bus",
+          source.count("media.install(") == 2,
+          str(source.count("media.install(")))
+    check("both backends listen for the focused media keys",
+          'key-press-event' in source and 'key-pressed' in source,
+          "a backend has no key handler")
+    app_js = (LIB / "chat" / "webui" / "app.js").read_text(encoding="utf-8")
+    check("the browser page handles the media keys itself",
+          "MediaPlayPause" in app_js and "MediaTrackNext" in app_js
+          and "MediaTrackPrevious" in app_js and "MediaStop" in app_js,
+          "no media key map in app.js")
+    check("the native window does not double-handle a media key",
+          "WebKitGTK" in app_js and "nativeWindow" in app_js,
+          "app.js cannot tell the native window")
+
 
 def check_journey(work: Path) -> None:
     """One realistic window session, from first paint to a saved playlist.
