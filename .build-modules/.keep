@@ -1,0 +1,3 @@
+# Empty by default: optional download modules are staged here by
+# build-image.sh / install.sh, then compiled into the image.
+# The folder exists so `docker build` also works with no modules at all.

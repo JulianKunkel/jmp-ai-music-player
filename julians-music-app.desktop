@@ -1,0 +1,30 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=JulAIn Music Player
+Name[de]=JulAIn Music Player
+GenericName=Music Player
+GenericName[de]=Musikplayer
+Comment=Chat with your music: play it, make playlists, learn what you like
+Comment[de]=Chatte mit deiner Musik: abspielen, Playlists bauen, Vorlieben lernen
+Keywords=music;audio;player;playlist;library;mpv;the import fetcher;chat;ai;
+Keywords[de]=Musik;Audio;Player;Playlist;Bibliothek;chat;ki;
+Exec=music-cli chat --web
+TryExec=music-cli
+Icon=julians-music-app
+Terminal=false
+StartupNotify=true
+StartupWMClass=julians-music-app
+Categories=AudioVideo;Audio;Player;
+X-GNOME-UsesNotifications=true
+Actions=play-random;play-chill;
+
+[Desktop Action play-random]
+Name=Play the whole library (shuffle)
+Name[de]=Ganze Bibliothek abspielen (zufällig)
+Exec=music-cli play --shuffle All
+
+[Desktop Action play-chill]
+Name=Play the chill list
+Name[de]=Chill-Liste abspielen
+Exec=music-cli mood play chill

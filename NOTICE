@@ -1,0 +1,71 @@
+JulAIn Music Player (JMP)
+Copyright (C) 2026 Julian M. Kunkel <julian.kunkel@gwdg.de>
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version.  See LICENSE for the full text.
+
+--------------------------------------------------------------------------------
+AI ASSISTANCE — PLEASE READ
+--------------------------------------------------------------------------------
+
+Substantial parts of this project were written with the help of a large
+language model used as a coding agent (OpenCode with a chat model, plus an
+image model for a failed logo attempt that was then replaced by hand-drawn
+SVG).  That covers, approximately:
+
+  * most of the Python code in lib/ and lib/chat/,
+  * the web window (lib/chat/webui/: HTML, CSS, vanilla JS, service worker),
+  * the test suites in tests/,
+  * the documentation in README.md, docs/ and this NOTICE,
+  * the mascot and launcher icon (docs/logo-jmp.svg, docs/logo-jmp.png,
+    julians-music-app.svg), drawn as hand-written SVG by the agent.
+
+The human author directed the work, chose the behaviour, ran and read the
+tests, reviewed the diffs and is the person answerable for what ships.  The
+AI was a tool, not an author.
+
+What this means for the licence and for you:
+
+  * Nothing here was copied from a third-party project.  Every dependency and
+    its licence is listed in docs/licences.md; they are used as libraries or
+    as separate programs, not vendored.
+  * Copyright in AI-generated output is unsettled and, in several
+    jurisdictions (including the US), a model's output alone cannot be
+    copyrighted because it lacks human authorship.  The human author claims
+    copyright only in the selection, arrangement, direction and review that a
+    person actually contributed, and releases that under the GPL as stated
+    above.  Where a court would find no human authorship in a given passage,
+    that passage is effectively public domain rather than GPL-encumbered; the
+    project does not pretend otherwise.
+  * No warranty is added or removed by this note.  The GPL's disclaimer of
+    warranty applies in full — this is experimental software written with AI
+    assistance and it may be wrong.
+  * If you reuse this project, keep this NOTICE and the licence with it, and do
+    not describe the code as entirely human-written.
+
+The music library that JMP indexes is the user's own data, is not part of this
+repository and is not covered by this licence.
+
+--------------------------------------------------------------------------------
+THIRD-PARTY COMPONENTS
+--------------------------------------------------------------------------------
+
+The Python dependencies, the bundled runtime programs and their licences are
+listed in docs/licences.md.  The important ones:
+
+  mutagen            GPL-2.0-or-later   imported in-process (the reason JMP is GPL)
+  numpy              BSD-3-Clause       in-process
+  textual / rich     MIT                in-process
+  Pygments           BSD-2-Clause       in-process
+  mpv                GPL-3+ (Ubuntu)    separate process, JSON IPC
+  ffmpeg / ffprobe   GPL-2+ (Ubuntu)    separate process
+  WebKitGTK, GTK     LGPL-2.1+          native window stack
+  faster-whisper     MIT                optional local transcription
+  ctranslate2        MIT                inference backend
+  onnxruntime        MIT                VAD runtime
+  PyAV (av)          BSD-3-Clause       audio decoding for ASR
+
+mpv, ffmpeg and the GTK/WebKit libraries are not part of this source tree; an
+installed image uses the distribution's packages under their own licences.

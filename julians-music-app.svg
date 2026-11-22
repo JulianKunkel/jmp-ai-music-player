@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"
+     viewBox="0 0 128 128" role="img" aria-label="JulAIn Music Player">
+  <title>JulAIn Music Player</title>
+  <defs>
+    <linearGradient id="bg" x1="12" y1="8" x2="116" y2="120"
+                    gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1f2a3a"/>
+      <stop offset="1" stop-color="#0b1220"/>
+    </linearGradient>
+    <linearGradient id="disc" x1="30" y1="24" x2="98" y2="104"
+                    gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4b5a6e"/>
+      <stop offset=".55" stop-color="#1b2430"/>
+      <stop offset="1" stop-color="#0e141c"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="60" y1="52" x2="108" y2="108"
+                    gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#67e8f9"/>
+      <stop offset="1" stop-color="#0ea5e9"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx="0" cy="0" r="1"
+                    gradientTransform="translate(44 30) rotate(48) scale(74)"
+                    gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".26"/>
+      <stop offset=".6" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- rounded app tile -->
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#bg)"/>
+  <rect x="4.75" y="4.75" width="118.5" height="118.5" rx="27.25"
+        fill="none" stroke="#94a3b8" stroke-opacity=".22" stroke-width="1.5"/>
+
+  <!-- vinyl record -->
+  <circle cx="58" cy="58" r="42" fill="url(#disc)"/>
+  <g fill="none" stroke="#8ea3bb" stroke-opacity=".18" stroke-width="1">
+    <circle cx="58" cy="58" r="37"/>
+    <circle cx="58" cy="58" r="32"/>
+    <circle cx="58" cy="58" r="27"/>
+    <circle cx="58" cy="58" r="22"/>
+  </g>
+  <circle cx="58" cy="58" r="42" fill="url(#sheen)"/>
+  <circle cx="58" cy="58" r="15" fill="url(#accent)"/>
+  <circle cx="58" cy="58" r="3.5" fill="#08111b"/>
+
+  <!-- note badge -->
+  <g transform="translate(94 92)">
+    <circle r="21" fill="#0b1220" stroke="url(#accent)" stroke-width="3"/>
+    <path d="M-8 10V-8l17-4v18" fill="none" stroke="url(#accent)"
+          stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="-11.5" cy="10" r="4.6" fill="url(#accent)"/>
+    <circle cx="5.5" cy="6" r="4.6" fill="url(#accent)"/>
+  </g>
+</svg>

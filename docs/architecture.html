@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JulAIn Music Player — architecture and data privacy</title>
+<style>
+  :root {
+    --bg: #0f1014;
+    --panel: #161a21;
+    --panel2: #1c2130;
+    --ink: #e9eaf0;
+    --muted: #9aa3b2;
+    --line: #2a3140;
+    --cyan: #67e8f9;
+    --violet: #a78bfa;
+    --amber: #fbbf24;
+    --green: #34d399;
+    --red: #fb7185;
+    --code: #0b0e13;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background:
+      radial-gradient(900px 500px at 12% -8%, #1b2433 0%, transparent 60%),
+      radial-gradient(800px 500px at 100% 0%, #241f3d 0%, transparent 55%),
+      var(--bg);
+    color: var(--ink);
+    font: 16px/1.62 system-ui, -apple-system, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  a { color: var(--cyan); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, kbd, pre {
+    font-family: "SFMono-Regular", ui-monospace, "Cascadia Code",
+                 "DejaVu Sans Mono", Menlo, Consolas, monospace;
+  }
+  code { background: var(--code); border: 1px solid var(--line);
+         padding: .08em .38em; border-radius: 6px; font-size: .9em; }
+  pre {
+    background: var(--code); border: 1px solid var(--line);
+    border-radius: 10px; padding: 14px 16px; overflow-x: auto;
+    font-size: 13.5px; line-height: 1.5;
+  }
+  pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 22px 90px; }
+  header.hero {
+    padding: 58px 0 26px; display: flex; gap: 26px; align-items: center;
+    flex-wrap: wrap;
+  }
+  header.hero img.logo {
+    width: 118px; height: 118px; border-radius: 26px;
+    box-shadow: 0 18px 50px rgba(0,0,0,.55);
+    flex: 0 0 auto;
+  }
+  header.hero h1 { margin: 0 0 6px; font-size: clamp(30px, 5vw, 46px);
+                   line-height: 1.08; letter-spacing: -.5px; }
+  header.hero p.lead { margin: 0; color: var(--muted); max-width: 640px; }
+  .tag {
+    display: inline-block; margin: 10px 8px 0 0; padding: 3px 10px;
+    border: 1px solid var(--line); border-radius: 999px; font-size: 12.5px;
+    color: var(--muted); background: rgba(255,255,255,.02);
+  }
+  nav.toc {
+    position: sticky; top: 0; z-index: 10;
+    background: rgba(15,16,20,.88); backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 34px;
+  }
+  nav.toc .inner {
+    max-width: 1040px; margin: 0 auto; padding: 10px 22px;
+    display: flex; gap: 6px 18px; flex-wrap: wrap; font-size: 13.5px;
+  }
+  nav.toc a { color: var(--muted); }
+  nav.toc a:hover { color: var(--ink); }
+  section { margin: 46px 0 0; scroll-margin-top: 64px; }
+  h2 { font-size: 27px; margin: 0 0 6px; letter-spacing: -.3px; }
+  h2 .num {
+    color: var(--violet); font-size: 15px; font-variant-numeric: tabular-nums;
+    margin-right: 10px; letter-spacing: .08em;
+  }
+  h3 { font-size: 19px; margin: 28px 0 8px; color: #d9dce6; }
+  h4 { font-size: 16px; margin: 20px 0 6px; color: #cfd4e0; }
+  p { margin: 10px 0; }
+  ul, ol { margin: 10px 0; padding-left: 24px; }
+  li { margin: 5px 0; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13.5px; }
+  .grid { display: grid; gap: 14px; }
+  .grid.two { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  .grid.three { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  .card {
+    background: linear-gradient(180deg, var(--panel), #12151b);
+    border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 18px 18px 14px;
+  }
+  .card h4 { margin-top: 0; }
+  .card p:last-child { margin-bottom: 0; }
+  .pill {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    font-size: 11.5px; letter-spacing: .04em; text-transform: uppercase;
+    border: 1px solid var(--line); color: var(--muted);
+  }
+  .pill.cyan { color: var(--cyan); border-color: #164e63; }
+  .pill.violet { color: var(--violet); border-color: #4c1d95; }
+  .pill.green { color: var(--green); border-color: #065f46; }
+  .pill.amber { color: var(--amber); border-color: #78350f; }
+  .pill.red { color: var(--red); border-color: #7f1d1d; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0;
+          font-size: 14.2px; }
+  th, td {
+    text-align: left; vertical-align: top; padding: 9px 11px;
+    border-bottom: 1px solid var(--line);
+  }
+  th { color: var(--muted); font-weight: 600; font-size: 12.5px;
+       text-transform: uppercase; letter-spacing: .06em; }
+  tr:hover td { background: rgba(255,255,255,.015); }
+  .flow {
+    display: flex; gap: 10px; align-items: stretch; flex-wrap: wrap;
+    margin: 16px 0;
+  }
+  .flow .step {
+    flex: 1 1 150px; min-width: 140px;
+    background: var(--panel2); border: 1px solid var(--line);
+    border-radius: 12px; padding: 12px 13px; position: relative;
+  }
+  .flow .step strong { display: block; margin-bottom: 3px; }
+  .flow .step span { color: var(--muted); font-size: 13px; }
+  .flow .step:not(:last-child)::after {
+    content: "→"; position: absolute; right: -10px; top: 50%;
+    transform: translateY(-50%); color: var(--violet); font-size: 18px;
+    z-index: 2;
+  }
+  .callout {
+    border-left: 3px solid var(--violet); background: #191528;
+    border-radius: 0 12px 12px 0; padding: 14px 18px; margin: 18px 0;
+  }
+  .callout.privacy { border-color: var(--cyan); background: #0f1e24; }
+  .callout.warn { border-color: var(--amber); background: #221a0b; }
+  .callout p:first-child { margin-top: 0; }
+  .callout p:last-child { margin-bottom: 0; }
+  .kbd { white-space: nowrap; }
+  .anchor { color: var(--muted); font-size: .7em; margin-left: 8px;
+            opacity: 0; transition: opacity .15s; }
+  h2:hover .anchor, h3:hover .anchor { opacity: 1; }
+  footer {
+    margin-top: 70px; padding-top: 22px; border-top: 1px solid var(--line);
+    color: var(--muted); font-size: 13.5px;
+    display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px;
+            color: var(--muted); margin-top: 8px; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px;
+         margin-right: 6px; vertical-align: -1px; }
+  @media (max-width: 620px) {
+    .wrap { padding: 0 16px 70px; }
+    header.hero { padding-top: 34px; }
+    .flow .step:not(:last-child)::after { content: "↓"; right: 50%;
+      top: auto; bottom: -16px; transform: translateX(50%); }
+    table { font-size: 13px; }
+    th, td { padding: 8px 7px; }
+  }
+  @media print {
+    body { background: #fff; color: #111; }
+    nav.toc { display: none; }
+    .card, .flow .step, pre { border-color: #ccc; background: #f7f7f7; }
+    a { color: #0645ad; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="toc" aria-label="Contents">
+  <div class="inner">
+    <a href="#what">What JMP is</a>
+    <a href="#principles">Principles</a>
+    <a href="#components">Components</a>
+    <a href="#flows">Data flows</a>
+    <a href="#storage">Storage</a>
+    <a href="#security">Security</a>
+    <a href="#privacy">Data privacy</a>
+    <a href="#limits">Limits</a>
+    <a href="#controls">Your controls</a>
+    <a href="#built">How it was built</a>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <header class="hero">
+    <img class="logo" src="logo-jmp.png"
+         alt="JMP mascot: a vinyl-record robot with headphones">
+    <div>
+      <h1>JulAIn Music Player</h1>
+      <p class="lead">
+        An AI-driven music player: how it is built, how a sentence or a
+        measured sound profile becomes an action, where your data goes, and why
+        almost none of it ever leaves this computer. This page is the technical
+        companion to the README: architecture first, privacy second, honest
+        limits last.
+      </p>
+      <span class="tag">AI / LLM planner</span>
+      <span class="tag">Psychoacoustics</span>
+      <span class="tag">Local first</span>
+      <span class="tag">No telemetry</span>
+      <span class="tag">Journalled writes</span>
+      <span class="tag">Optional remote planner</span>
+      <span class="tag">GPL-3.0-or-later</span>
+    </div>
+  </header>
+
+  <!-- ================================================================= -->
+  <section id="what">
+    <h2><span class="num">01</span>What JMP is</h2>
+    <p>
+      JMP is an <strong>AI-driven, self-hosted music player</strong>. It reads a
+      music folder that already exists, indexes it, plays it through
+      <code>mpv</code>, and lets you shape it in a chat window: search, queue,
+      build playlists, rank and reshape by <strong>measured
+      psychoacoustics</strong>, read timed lyrics, and record what you like.
+      The music itself is never uploaded and never rewritten by the chat.
+    </p>
+    <p>
+      The product has two faces over one engine: a small command line
+      (<code>music-cli</code>) and a local web window. The window is served by
+      a Python HTTP server bound to loopback and protected by a random token.
+      An optional native GTK/WebKit shell, a Chromium <code>--app</code>
+      window, or a phone browser can all show the same page.
+    </p>
+    <div class="callout">
+      <p><strong>One sentence.</strong> A local web app over a journalled
+      library toolkit, with an offline bilingual planner (and an optional
+      fenced OpenAI-compatible planner), that turns a sentence — or a measured
+      sound profile — into an action.</p>
+    </div>
+
+    <h3>Three things that make it “AI-driven”</h3>
+    <div class="grid three">
+      <div class="card">
+        <h4>AI and LLM</h4>
+        <p>The default planner is a deterministic English/German parser that
+        needs no model and no network. Choosing a planner adds an
+        OpenAI-compatible agent (local Ollama or a remote server) over a
+        <em>fenced</em> tool list: catalogue reads, profile reads and playlist
+        writes — no shell, no paths, no deletes.  If a build includes an
+        optional download module, that module adds its own search and import
+        tools.  Local Whisper handles lyrics and voice.</p>
+      </div>
+      <div class="card">
+        <h4>Psychoacoustics</h4>
+        <p>Every track is decoded and measured (35 columns: tempo, onsets,
+        pulse clarity, LUFS, dynamics, centroid, flatness, sharpness,
+        harmonicity, roughness, key, major/minor, stereo width, five band
+        shares, attack sharpness).
+        Those become twelve 0..1 axes, five profile sets and eight sound
+        families, all percentiles <em>inside this library</em>.</p>
+      </div>
+      <div class="card">
+        <h4>Natural language</h4>
+        <p>Moods, durations, superlatives, lyric fragments, artist and album
+        names, import links, settings and maintenance all work as a sentence,
+        in English or German. A lookup only lists; a play word is required
+        before anything starts. Nothing deletes music.</p>
+      </div>
+    </div>
+
+    <h3>What you can say (examples)</h3>
+    <table>
+      <tr><th>Intent</th><th>Sentences</th></tr>
+      <tr><td>Play / transport</td>
+          <td>“play Bands”, “play something chill”, “the whole library
+              shuffled”, “pause”, “volume 40”, “continue where I left off”</td></tr>
+      <tr><td>Playlists and queues</td>
+          <td>“create a smooth playlist for work”, “one hour of metal”,
+              “a playlist with 30 tracks of rock”, “save that as Late Night”,
+              “make a smart playlist of 90s metal”, “make a smart playlist of
+              tracks longer than 8 minutes, shuffled”</td></tr>
+      <tr><td>Sound, mood and rank</td>
+          <td>“find the slowest and boring song”, “the 10 most aggressive
+              tracks”, “why is this the most aggressive?”, “find music
+              similar to this but faster”, “find something 20 % faster”, “show the
+              timbre profile”, “start a radio from this song”</td></tr>
+      <tr><td>Lyrics</td>
+          <td>“songs about the sea”, “which song mentions pizza”, “export the
+              lyrics as lrc”, “shift the lyrics half a second later”</td></tr>
+      <tr><td>Library as data</td>
+          <td>“how many tracks do I have”, “which genres do I have most of”,
+              “what's new”, “is the library healthy”, “show duplicate 3”</td></tr>
+      <tr><td>Playlist import</td>
+          <td>“import all playlists from ~/Downloads/playlists”, “import this
+              spotify playlist &lt;link&gt;”</td></tr>
+      <tr><td>Download <em>(optional module)</em></td>
+          <td>“search for …”, “download 2”, “retry the download” — only in a
+              build that includes a download module</td></tr>
+      <tr><td>Settings and upkeep</td>
+          <td>“turn off the visualizer”, “keep the last 5 backups”, “index the
+              library”, “pause the indexing”, “measure the library”,
+              “transcribe all songs without lyrics”</td></tr>
+      <tr><td>Feedback and learning</td>
+          <td>“I like this”, “das gefällt mir”, “when I say sunday I mean
+              chill and jazz”</td></tr>
+    </table>
+    <p class="small muted">
+      The offline parser covers these without a model; an LLM planner is more
+      forgiving of free phrasing but is validated by the same engine before a
+      skill runs. German examples: “spiele etwas Entspanntes”, “mach das Radio
+      an”, “wie viele Lieder habe ich”, “verschiebe die Lyrics um eine halbe
+      Sekunde nach hinten”.
+    </p>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="principles">
+    <h2><span class="num">02</span>Design principles</h2>
+    <div class="grid two">
+      <div class="card">
+        <h4>Local by default</h4>
+        <p>Indexing, search, playback, mood analysis, sound profiles and lyric
+        transcription all run on this machine. The only network calls are the
+        ones you explicitly ask for or configure.</p>
+      </div>
+      <div class="card">
+        <h4>Journals before writes</h4>
+        <p>Every tag write, rename, move or playlist change is recorded in
+        <code>library-work/journal/</code> and fsynced <em>before</em> the file
+        changes. Rollback tools read the same journal.</p>
+      </div>
+      <div class="card">
+        <h4>The chat never deletes music</h4>
+        <p>It can create, edit, rename and delete <em>custom playlists</em>
+        (journalled). Audio only enters through a local add, or through an
+        optional download module in a build that includes one, and a delete
+        needs an explicit human decision.</p>
+      </div>
+      <div class="card">
+        <h4>Generated output is disposable</h4>
+        <p>Shelf, mood, focus, psycho and smart playlists are rebuilt from the
+        inventory. Hand-made lists live in <code>Playlists/Custom/</code>;
+        ad-hoc queues in <code>Playlists/Own/</code>.</p>
+      </div>
+      <div class="card">
+        <h4>The planner is fenced</h4>
+        <p>The optional language model may call a fixed list of tools. No tool
+        takes a filesystem path, runs a shell, deletes audio or rewrites a tag.
+        A delete needs a delete word in your own sentence.</p>
+      </div>
+      <div class="card">
+        <h4>Fail visibly</h4>
+        <p>Every HTTP route is wrapped: an exception becomes a JSON 500 with
+        the endpoint, the error and the log path, never a dropped socket that
+        the page reports as “Load failed”.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="components">
+    <h2><span class="num">03</span>Components</h2>
+
+    <h3>Process and deployment</h3>
+    <div class="flow" aria-label="Launcher to window">
+      <div class="step"><strong>Launcher</strong>
+        <span><code>music-cli</code> / desktop entry</span></div>
+      <div class="step"><strong>Runtime</strong>
+        <span>Docker container or host venv</span></div>
+      <div class="step"><strong>Server</strong>
+        <span><code>music chat --web</code></span></div>
+      <div class="step"><strong>Window</strong>
+        <span>GTK/WebKit, Chromium <code>--app</code>, or browser</span></div>
+    </div>
+    <p>
+      The container mounts the music folder at <code>/library</code> and keeps
+      the mpv daemon inside it. Nothing of the library is baked into the image.
+      On a host install the same code runs from a venv. A second launch of the
+      window is a no-op: the state file names the running server, the PID is
+      checked and the existing URL is reopened.
+    </p>
+
+    <h3>The Python packages</h3>
+    <table>
+      <tr><th>Path</th><th>Responsibility</th></tr>
+      <tr><td><code>lib/music.py</code></td>
+          <td>The CLI: play, search, transport, playlists, mood, index, data,
+              chat, shell. It never writes a tag or moves a file itself.</td></tr>
+      <tr><td><code>lib/mpvctl.py</code></td>
+          <td>mpv JSON-IPC client. One headless daemon per socket; the app
+              starts it on demand.</td></tr>
+      <tr><td><code>lib/playlist_edit.py</code></td>
+          <td>Journalled playlist editor: write, append, remove, delete,
+              rename, custom/Own/smart folders, rollback.</td></tr>
+      <tr><td><code>lib/add_file.py</code></td>
+          <td>Copy a local file into the library: tag, journal, move,
+              rollback.</td></tr>
+      <tr><td><code>lib/chat/downloads.py</code></td>
+          <td>Facade for an optional build-time download module: discovery,
+              stub answers when none is installed, and proxies when one is.</td></tr>
+      <tr><td><code>lib/chat/engine.py</code></td>
+          <td>Conversation state and the skill handlers. The only place a plan
+              becomes an action.</td></tr>
+      <tr><td><code>lib/chat/nlu.py</code></td>
+          <td>Offline bilingual (English/German) intent parser. The default
+              planner, and what runs when a model is not configured.</td></tr>
+      <tr><td><code>lib/chat/llm.py</code></td>
+          <td>Optional OpenAI-compatible planner. The agent loop over a
+              fenced tool list, with a JSON-plan fallback.</td></tr>
+      <tr><td><code>lib/chat/tools.py</code></td>
+          <td>The tool surface: catalogue reads, metadata filters, profile
+              reads, playlist writes, and a download module's tools when one is
+              installed. No shell, no paths, no deletes of audio.</td></tr>
+      <tr><td><code>lib/chat/web.py</code></td>
+          <td>The HTTP server, token checks, every <code>/api/*</code> route,
+              the page, the manifest, the service worker, diagnostics.</td></tr>
+      <tr><td><code>lib/chat/webui/</code></td>
+          <td>The single-page window: HTML, CSS, vanilla JS. No framework, no
+              CDN, no external font.</td></tr>
+      <tr><td><code>lib/chat/window.py</code></td>
+          <td>The optional native GTK3/GTK4 + WebKit window. Standalone; it
+              imports nothing from the package.</td></tr>
+      <tr><td><code>lib/chat/catalog.py</code></td>
+          <td>Inventory rows, track/playlist resolution, search, stats.</td></tr>
+      <tr><td><code>lib/chat/player.py</code></td>
+          <td>Playback with errors a conversation can show.</td></tr>
+      <tr><td><code>lib/chat/psycho.py</code></td>
+          <td>Read-only reader of the measured sound profiles: axes, similar
+              tracks, families, explanations, five profile sets.</td></tr>
+      <tr><td><code>lib/chat/lyrics.py</code></td>
+          <td>Read-only reader of the lyric database: timed lines, FTS5 search,
+              timing offsets, LRC export.</td></tr>
+      <tr><td><code>lib/chat/*_job.py</code></td>
+          <td>Background jobs: index, profiles, lyrics, library data. One
+              detached child each, pause/resume through <code>/proc</code>,
+              progress read from logs.</td></tr>
+      <tr><td><code>lib/skills/&lt;name&gt;/SKILL.md</code></td>
+          <td>Twenty skill descriptions, loaded into the planner's prompt and
+              the chat's help. Data, not code.</td></tr>
+    </table>
+
+    <h3>The library tools (not part of the shipped app)</h3>
+    <p>
+      The app is the conversation and the player. The heavy library work —
+      scanning, tagging, artwork, deduplication, mood features, sound profiles,
+      lyric transcription, the daily backup — lives in the repository's
+      <code>scripts/</code> folder and is called as a subprocess or through a
+      small read-only reader. A plain music folder without <code>scripts/</code>
+      can still play, search and use playlists; it cannot tag new files or
+      start a measurement job.
+    </p>
+
+    <h3>External programs</h3>
+    <table>
+      <tr><th>Program</th><th>Used for</th><th>Runs as</th></tr>
+      <tr><td><code>mpv</code></td><td>playback</td><td>one headless daemon,
+          JSON IPC on a Unix socket</td></tr>
+      <tr><td><code>ffmpeg</code> / <code>ffprobe</code></td>
+          <td>probing, decoding, waveform and spectrum, mood and profile
+              measurements, import checks</td><td>subprocess</td></tr>
+      <tr><td><code>the import fetcher</code> <em>(module)</em></td>
+          <td>search and audio import — only in a build with a download module</td>
+          <td>subprocess</td></tr>
+      <tr><td>faster-whisper</td><td>local lyric and voice transcription</td>
+          <td>own ASR venv, subprocess</td></tr>
+      <tr><td><code>docker</code>/<code>podman</code></td>
+          <td>the container launcher</td><td>installer and wrapper</td></tr>
+      <tr><td>SongRec</td><td>optional Shazam confirmation used by some
+          library reports</td><td>subprocess, not bundled with the app</td></tr>
+    </table>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="flows">
+    <h2><span class="num">04</span>Data flows</h2>
+
+    <h3>A chat turn</h3>
+    <div class="flow" aria-label="Chat request flow">
+      <div class="step"><strong>Page</strong><span><code>POST /api/chat</code></span></div>
+      <div class="step"><strong>Engine</strong><span>lock, poll, plan</span></div>
+      <div class="step"><strong>Planner</strong><span>offline NLU → learned
+        phrase → optional model</span></div>
+      <div class="step"><strong>Skill</strong><span>one handler, journalled
+        writes only</span></div>
+      <div class="step"><strong>Answer</strong><span>Markdown → escaped
+        HTML</span></div>
+    </div>
+    <ol>
+      <li>The page sends <code>{message}</code> with the token.</li>
+      <li>The engine takes the service lock, polls the player for implicit
+          learning, and asks the planner. The offline parser runs first; a
+          learned phrase wins over a model; the model is only asked when it is
+          configured and enabled.</li>
+      <li>The plan is validated (<code>Engine._execute</code>): mood names and
+          weights are clamped, counts and lengths bounded, a seed must resolve
+          to a real library track, and a “lookup” without a playback word is
+          downgraded to a search so a model cannot start music by accident.</li>
+      <li>Exactly one skill handler runs. Playlist writes go through
+          <code>playlist_edit</code> inside <code>at_root()</code>, so the
+          journal line exists before the file.</li>
+      <li>The reply is Markdown. The server escapes it first and only turns
+          headings, lists, code, bold/italic and links back into markup, so a
+          tag containing <code>&lt;img onerror=…&gt;</code> is shown as text.</li>
+    </ol>
+
+    <h3>Playback</h3>
+    <div class="flow" aria-label="Playback flow">
+      <div class="step"><strong>Click / chat</strong><span>a library-relative
+        path or a playlist</span></div>
+      <div class="step"><strong>Engine</strong><span>resolve against the
+        inventory</span></div>
+      <div class="step"><strong>Player</strong><span>mpv IPC: load, shuffle,
+        seek</span></div>
+      <div class="step"><strong>Session</strong><span>queue, track, playhead
+        in app state</span></div>
+    </div>
+    <p>
+      A track is always a <code>rel</code> path the catalogue already knows;
+      the page never sends an absolute path. A playlist click hands the
+      <code>.m3u8</code> to mpv, which resolves the relative entries. “Continue
+      where I left off” rebuilds the queue from the session file and seeks to
+      the remembered second.
+    </p>
+
+    <h3>Background jobs</h3>
+    <p>
+      The footer chips start real work without a terminal: re-index the
+      inventory, measure sound profiles, transcribe lyrics, back up the two
+      databases, or — in a build with a download module — run its download
+      queue. Each job is one detached child
+      with <code>start_new_session=True</code>, a record under
+      <code>library-work/app/&lt;area&gt;/jobs/</code>, a log and an exit-code
+      file. Pause is <code>SIGSTOP</code>, resume <code>SIGCONT</code>, cancel
+      <code>SIGCONT</code> + <code>SIGTERM</code> to the process group; a
+      finished child is reaped instead of looking alive forever.
+    </p>
+    <p>
+      Jobs write databases, reports and generated playlists. They do not edit
+      music files and they delete nothing. The one exception is the explicit,
+      journalled playlist editor.
+    </p>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="storage">
+    <h2><span class="num">05</span>Where everything lives</h2>
+    <p>
+      The music folder is the root. Everything JMP adds is inside it, so a
+      backup of the folder is a backup of the app's memory too.
+    </p>
+    <table>
+      <tr><th>Path</th><th>What it holds</th><th>Rebuildable?</th></tr>
+      <tr><td><code>library-work/inventory/</code></td>
+          <td>One JSONL row per audio file: tags, technical data, flags, paths.
+              The catalogue and the statistics read this, not the audio.</td>
+          <td>yes (rescan)</td></tr>
+      <tr><td><code>library-work/journal/</code></td>
+          <td>Append-only record of every tag write, move, rename, artwork
+              change, playlist write, deletion and import. The rollback
+              source.</td><td>no — keep it</td></tr>
+      <tr><td><code>library-work/app/chat/</code></td>
+          <td>Learned taste, notes, phrases, recent plays, settings, secrets,
+              session, radio state, voice clips (deleted after use), server
+              state, logs.</td><td>partly</td></tr>
+      <tr><td><code>library-work/app/psycho/features.db</code></td>
+          <td>35 measurements per song, twelve psychology axes, five profile
+              sets, eight sound families.</td><td>yes (expensive)</td></tr>
+      <tr><td><code>library-work/app/lyrics/lyrics.db</code></td>
+          <td>Timed lyric lines and an FTS5 index.</td>
+          <td>yes (expensive)</td></tr>
+      <tr><td><code>library-work/app/library-data/</code></td>
+          <td>Audio fingerprints and the daily plain-text export
+              (<code>LibraryData/*.jsonl</code>) plus database backups.</td>
+          <td>yes</td></tr>
+      <tr><td><code>library-work/reports/</code></td>
+          <td>Readable and machine-checked reports: quality, albums, artwork,
+              duplicates, moods, profiles, franchise moves.</td><td>yes</td></tr>
+      <tr><td><code>Playlists/</code></td>
+          <td>Shelf, mood, focus, psycho and smart lists (generated), plus
+              <code>Custom/</code> (yours) and <code>Own/</code> (ad-hoc
+              queues).</td><td>generated ones yes</td></tr>
+      <tr><td><code>LibraryData/</code></td>
+          <td>A daily JSONL copy of the profiles, sets, families and lyric
+              lines, matched by an audio fingerprint rather than a file
+              name.</td><td>yes</td></tr>
+    </table>
+    <div class="callout">
+      <p><strong>Fingerprints, not file names.</strong> The daily export links
+      a record to a file by a SHA-256 of the coded audio packets
+      (<code>ffmpeg -c copy -f streamhash</code>), so a tag write or a rename
+      does not break the link. The hash covers no tags, no cover art and no
+      file name, and it is never sent anywhere.</p>
+    </div>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="security">
+    <h2><span class="num">06</span>Local security model</h2>
+    <div class="grid two">
+      <div class="card">
+        <h4>Loopback and a fresh token</h4>
+        <p>The server binds <code>127.0.0.1</code> (the container publishes
+        only <code>127.0.0.1:8765</code>) and generates
+        <code>secrets.token_urlsafe(18)</code> per start. Every request is
+        compared with <code>hmac.compare_digest</code>.</p>
+      </div>
+      <div class="card">
+        <h4>No caching of answers</h4>
+        <p>Every response sets <code>Cache-Control: no-store</code>. The page
+        and every <code>/api/*</code> answer need the token; only the static
+        shell and <code>/sw.js</code> are public.</p>
+      </div>
+      <div class="card">
+        <h4>Static files are whitelisted</h4>
+        <p><code>/static/&lt;file&gt;</code> accepts only
+        <code>[A-Za-z0-9_.-]+</code>, so a path traversal never reaches the
+        filesystem.</p>
+      </div>
+      <div class="card">
+        <h4>The token stays out of logs</h4>
+        <p>Diagnostics record the path without its query string. The test
+        suite asserts that a token never appears in a log file.</p>
+      </div>
+      <div class="card">
+        <h4>The model gets no free path</h4>
+        <p>No tool accepts a path, a URL fetch beyond a download module's
+        search, a shell command, or a delete. A track is always a
+        <code>rel</code> the catalogue knows.</p>
+      </div>
+      <div class="card">
+        <h4>Writes are narrow</h4>
+        <p>The planner may write a custom playlist, and — with a download
+        module — start an import. Both are journalled. It cannot move, retag or
+        delete audio.</p>
+      </div>
+    </div>
+    <div class="callout warn">
+      <p><strong>What the token is not.</strong> It separates the app from
+      other pages and casual local processes, not from a process running as
+      your user. That process can read
+      <code>library-work/app/chat/server.json</code> and the token in it.
+      The connection is plain HTTP on loopback; do not expose the port to a
+      LAN without a reverse proxy and TLS.</p>
+    </div>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="privacy">
+    <h2><span class="num">07</span>Data privacy</h2>
+
+    <div class="callout privacy">
+      <p><strong>The short version.</strong> Your audio, tags, lyrics, sound
+      profiles and listening history stay in the music folder. JMP has no
+      account, no telemetry, no analytics and no crash reporting. Nothing is
+      sent anywhere unless you configure a remote planner, use a download
+      module's import, or let a library tool fetch artwork or a Whisper
+      model.</p>
+    </div>
+
+    <h3>What leaves this machine — and only when</h3>
+    <table>
+      <tr><th>Feature</th><th>What is sent</th><th>To whom</th><th>Default</th></tr>
+      <tr>
+        <td>Remote planner</td>
+        <td>Your chat sentence, the skill descriptions, and the JSON the
+            read-only tools return (titles, artists, albums, genres, playlist
+            names, measured axis values). No audio, no file paths, no token.</td>
+        <td>The OpenAI-compatible base URL you configured (for example GWDG/
+            SAIA, or any server you name)</td>
+        <td><strong>off</strong> until you choose a provider</td>
+      </tr>
+      <tr>
+        <td>Local planner (Ollama)</td>
+        <td>The same text, to a server on <code>127.0.0.1</code> or your own
+            LAN address.</td>
+        <td>Your Ollama</td>
+        <td>off; choose “ollama” to enable</td>
+      </tr>
+      <tr>
+        <td>Download module (optional)</td>
+        <td>The search words or the URL, plus the normal HTTP metadata of the
+            module's request.</td>
+        <td>Whatever service the module talks to</td>
+        <td>only in a build with a module, and only when you ask</td>
+      </tr>
+      <tr>
+        <td>Lyrics and voice</td>
+        <td>The audio is decoded <em>locally</em>. On the first run
+            <code>faster-whisper</code> may download a model from Hugging
+            Face; after that no audio or text leaves.</td>
+        <td>Hugging Face (model download only)</td>
+        <td>model download once</td>
+      </tr>
+      <tr>
+        <td>Artwork tools (repository scripts)</td>
+        <td>Artist, album and track names, to look up a cover.</td>
+        <td>MusicBrainz, Cover Art Archive, iTunes, Deezer</td>
+        <td>only when that tool is run</td>
+      </tr>
+      <tr>
+        <td>SongRec / Shazam (optional, not the app)</td>
+        <td>A short audio fingerprint.</td>
+        <td>Shazam</td>
+        <td>only in the helper reports</td>
+      </tr>
+      <tr>
+        <td>Package install</td>
+        <td>Normal package manager and container registry traffic.</td>
+        <td>Your distribution, Docker Hub, PyPI</td>
+        <td>during install/update</td>
+      </tr>
+    </table>
+
+    <h3>What is stored locally about you</h3>
+    <ul>
+      <li><strong>Taste profile</strong> — explicit likes and dislikes, notes,
+          learned phrases, recently played tracks and the fraction heard. Small
+          JSON under <code>library-work/app/chat/</code>.</li>
+      <li><strong>Listening state</strong> — the current queue, track and
+          playhead in <code>session.json</code>, so “Continue” works.</li>
+      <li><strong>Settings and secrets</strong> — <code>settings.json</code>,
+          and an API key in <code>secrets.json</code> with mode <code>0600</code>.
+          The key is never echoed back to the page or the API.</li>
+      <li><strong>Measurements</strong> — sound features, profile axes and
+          lyric lines, keyed by library-relative path and audio fingerprint.</li>
+      <li><strong>Logs</strong> — request and error logs without tokens or
+          query strings; rotated and local.</li>
+    </ul>
+
+    <h3>What is deliberately <em>not</em> collected</h3>
+    <div class="grid three">
+      <div class="card"><h4>No account</h4><p>There is nothing to sign in to
+        and no user identifier.</p></div>
+      <div class="card"><h4>No telemetry</h4><p>No usage counters, no
+        “phone home”, no crash upload.</p></div>
+      <div class="card"><h4>No ads or tracking</h4><p>The page loads no
+        third-party script, font, pixel or CDN asset.</p></div>
+    </div>
+    <p class="small muted">
+      The service worker caches only <code>/static/app.css</code>,
+      <code>/static/app.js</code> and the icon. It never caches the page or an
+      API answer, because both carry live library data and the token.
+    </p>
+
+    <h3>Voice input</h3>
+    <p>
+      A recorded clip is written to a temporary file under the app state,
+      transcribed by the local ASR interpreter, and unlinked in a
+      <code>finally</code> block — success, failure or timeout alike. It never
+      becomes a lyric row, and with autosend off it only fills the prompt for
+      you to correct.
+    </p>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="limits">
+    <h2><span class="num">08</span>Honest limits</h2>
+    <ul>
+      <li><strong>Relative measurements.</strong> A sound axis is a percentile
+          inside <em>this</em> library, not an absolute claim about the music.
+          The instrument set is a heuristic over band shares, not a trained
+          classifier.</li>
+      <li><strong>“New” means changed.</strong> The inventory has no import
+          date, so “recently added” uses file <code>mtime</code>. A tagging or
+          rename pass makes old files look new, and the answer says so.</li>
+      <li><strong>Weak rips stay weak.</strong> Files ffmpeg cannot decode are
+          reported as failed measurements, not silently patched.</li>
+      <li><strong>Token lifetime.</strong> The token changes with every server
+          start, so an installed home-screen icon or an old tab needs the new
+          URL. The page says the token is out of date instead of retrying
+          forever.</li>
+      <li><strong>Secure context.</strong> A service worker and an install
+          prompt need HTTPS (or loopback). A phone on the LAN needs a TLS
+          proxy; plain <code>http://&lt;LAN-IP&gt;</code> does not qualify.</li>
+      <li><strong>Optional model quality.</strong> The offline parser is
+          predictable; a language model is more flexible and less reliable.
+          Either way the engine validates the plan and the skill does the
+          writing.</li>
+      <li><strong>Downloading is a legal question, not a technical one.</strong>
+          The open player has no download feature at all; a build-time module
+          is what adds one, and downloading may violate a site's terms or
+          copyright where you live.  That decision stays yours; see
+          <a href="licences.md">the licence audit</a>.</li>
+    </ul>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="controls">
+    <h2><span class="num">09</span>Your controls</h2>
+    <div class="grid two">
+      <div class="card">
+        <h4>Stay fully offline</h4>
+        <p>Leave <code>use_llm</code> off (the default) or point
+        <code>llm_provider</code> at a local Ollama. Install no download
+        module. Everything else — search, playlists, playback, profiles,
+        lyrics, statistics — works without a network.</p>
+      </div>
+      <div class="card">
+        <h4>See and change every setting</h4>
+        <p>Settings → the eight tabs, or simply ask: “show the settings”,
+        “turn off the visualizer”, “keep the last 5 backups”. One registry
+        decides every default, choice and alias.</p>
+      </div>
+      <div class="card">
+        <h4>Delete what the app remembers</h4>
+        <p>The taste profile, session, radio state, caches and databases are
+        ordinary files under <code>library-work/app/</code>. Remove them while
+        the app is stopped; the music is untouched.</p>
+      </div>
+      <div class="card">
+        <h4>Keep the journals</h4>
+        <p><code>library-work/journal/</code> is the rollback record. It is
+        also the honest history of what the tools did. Back it up with the
+        rest of the folder.</p>
+      </div>
+      <div class="card">
+        <h4>Take the data with you</h4>
+        <p>Settings → Library data writes a plain-text daily JSONL of profiles
+        and lyrics, matched by audio fingerprint, and can import it again after
+        a rename or a reinstall.</p>
+      </div>
+      <div class="card">
+        <h4>No lock-in</h4>
+        <p>The window is vanilla HTML/CSS/JS over documented JSON routes. The
+        playlists are ordinary <code>.m3u8</code> files. The databases are
+        SQLite. The source is GPL-3.0-or-later.</p>
+      </div>
+    </div>
+
+    <div class="callout" style="margin-top:26px">
+      <p><strong>Where to read more:</strong>
+      <a href="../README.md">README</a> for install and use,
+      <a href="licences.md">licences.md</a> for the dependency audit and the
+      release answer,
+      <a href="logo-jmp.svg">logo-jmp.svg</a> for the mascot source,
+      <a href="../NOTICE">NOTICE</a> for the copyright line and the AI statement.
+      The behaviour contracts live in the repository's
+      <code>AGENTS.md</code>.</p>
+    </div>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="built">
+    <h2><span class="num">10</span>How it was built</h2>
+    <div class="callout">
+      <p><strong>Most of this was written with an AI coding agent.</strong>
+      The human author set the requirements, chose every behaviour, ran and
+      read the tests, and reviewed each change; the model wrote most of the
+      code, the tests, the documentation and the hand-drawn SVG mascot. It was
+      a tool, not an author — and the project says so rather than hiding it,
+      because it changes how much trust to place in experimental software.</p>
+    </div>
+    <p>
+      Two consequences worth knowing. Copyright in model output is unsettled:
+      in several jurisdictions a model's text alone cannot be copyrighted, so
+      the human author claims the selection, arrangement, direction and review
+      they actually contributed, and releases that under the GPL. And a model
+      cannot maintain the project or answer an issue — the human author does.
+      The full statement, including what was and was not copied from elsewhere,
+      is in <a href="../NOTICE">NOTICE</a> and
+      <a href="licences.md">licences.md</a> §8.
+    </p>
+    <div class="grid three">
+      <div class="card"><h4>Directed, not autonomous</h4><p>Every feature came
+        from a written requirement; the agent proposed, the human accepted or
+        rejected, and the test suite is the referee.</p></div>
+      <div class="card"><h4>No vendored code</h4><p>Dependencies are libraries
+        or separate programs with their own licences — never copied source
+        trees. The in-process <code>mutagen</code> import is why the project
+        is GPL.</p></div>
+      <div class="card"><h4>No warranty</h4><p>The GPL disclaimer applies in
+        full. AI-assisted code can be confidently wrong; the journals exist so
+        a wrong write can be taken back.</p></div>
+    </div>
+  </section>
+
+  <footer>
+    <span>JulAIn Music Player (JMP) — architecture and data privacy</span>
+    <span>Local first · GPL-3.0-or-later · no telemetry</span>
+  </footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="chat-token" content="__TOKEN__">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0f1014">
+<meta name="description" content="JulAIn Music Player — play, search and shape the music library.">
+<title>JulAIn Music Player</title>
+<link rel="manifest" href="/manifest.webmanifest?t=__TOKEN__">
+<link rel="apple-touch-icon" href="/static/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="JMP">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="/static/app.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f1014'/%3E%3Cpath d='M26 44V22l18-4v20' fill='none' stroke='%23a78bfa' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='22' cy='45' r='5' fill='%23a78bfa'/%3E%3Ccircle cx='40' cy='39' r='5' fill='%23a78bfa'/%3E%3C/svg%3E">
+</head>
+<body>
+
+<svg class="sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+  <symbol id="i-prev" viewBox="0 0 24 24"><path d="M7 5h2v14H7zM19 5.5v13L9.5 12z"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><path d="M15 5h2v14h-2zM5 5.5v13L14.5 12z"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 16l4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-3.2-6.4z"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M9 21h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-import" viewBox="0 0 24 24"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 17v3h14v-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-thumb-up" viewBox="0 0 24 24"><path d="M7 11v9H4v-9zM10 20h7a2 2 0 0 0 2-1.6l1.3-6.4A2 2 0 0 0 18.3 9H14V6a2 2 0 0 0-2-2l-2 7z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+  <symbol id="i-thumb-down" viewBox="0 0 24 24"><path d="M17 13V4h3v9zM14 4H7a2 2 0 0 0-2 1.6L3.7 12A2 2 0 0 0 5.7 15H10v3a2 2 0 0 0 2 2l2-7z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+  <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM18.5 15l.9 2.3 2.3.9-2.3.9-.9 2.3-.9-2.3-2.3-.9 2.3-.9z" fill="currentColor"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4v4h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-music" viewBox="0 0 24 24"><path d="M10 18V6l9-2v12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="7.5" cy="18" r="2.5" fill="currentColor"/><circle cx="16.5" cy="16" r="2.5" fill="currentColor"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2L4 14h6l-1 8 9-12h-6z"/></symbol>
+  <symbol id="i-wave" viewBox="0 0 24 24"><path d="M3 12h2l2-6 3 13 3-17 3 13 2-3h3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.6v2.6M12 18.8v2.6M4.4 4.4l1.9 1.9M17.7 17.7l1.9 1.9M2.6 12h2.6M18.8 12h2.6M4.4 19.6l1.9-1.9M17.7 6.3l1.9-1.9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M5 4v6M5 14v6M12 4v10M12 18v2M19 4v2M19 10v10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="5" cy="12" r="2" fill="currentColor"/><circle cx="12" cy="16" r="2" fill="currentColor"/><circle cx="19" cy="8" r="2" fill="currentColor"/></symbol>
+  <symbol id="i-brain" viewBox="0 0 24 24"><path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-1 5.8A3 3 0 0 0 8 18a3 3 0 0 0 4 1V4.5A3 3 0 0 0 9 4zM15 4a3 3 0 0 1 3 3 3 3 0 0 1 1 5.8A3 3 0 0 1 16 18a3 3 0 0 1-4 1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20l1-4L16.5 4.5a2 2 0 0 1 3 3L8 19zM14.5 6.5l3 3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-radio" viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="12" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 4.5l4 3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="14" r="2.2" fill="currentColor"/><path d="M13 12.5h5M13 16h5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-lrc" viewBox="0 0 24 24"><path d="M6 3h8l5 5v13H6z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M14 3v5h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M9 13h7M9 16.5h5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-quote" viewBox="0 0 24 24"><path d="M9 6H6a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h2v1a2 2 0 0 1-2 2H5M19 6h-3a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h2v1a2 2 0 0 1-2 2h-1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</svg>
+
+<div class="app" id="app">
+
+  <!-- ------------------------------------------------------------------ -->
+  <aside class="sidebar">
+
+    <div class="brand">
+      <div class="brand-mark"><svg><use href="#i-music"/></svg></div>
+      <div class="brand-text">
+        <strong>JulAIn Music</strong>
+        <span id="brand-root">library</span>
+      </div>
+    </div>
+
+    <section class="now" id="now">
+      <div class="section-head">
+        <span class="label">Now playing</span>
+        <span class="section-actions">
+          <button class="icon-btn tiny" id="np-tags" type="button" disabled title="Edit the tags and artwork of this track"><svg><use href="#i-pencil"/></svg></button>
+          <button class="icon-btn tiny" id="np-facts" type="button" disabled title="Sound properties of this track: net diagram, 12 axes, 31 measurements"><svg><use href="#i-brain"/></svg></button>
+          <button class="icon-btn tiny" id="radio-toggle" type="button" aria-pressed="false" title="Radio mode: keep playing tracks that sound like this one"><svg><use href="#i-radio"/></svg></button>
+          <button class="icon-btn tiny" id="queue-toggle" type="button" title="Show what plays next: the queue with jump and remove"><svg><use href="#i-list"/></svg></button>
+          <button class="icon-btn tiny" id="lyrics-toggle" type="button" title="Show the lyrics of the current song, line by line"><svg><use href="#i-quote"/></svg></button>
+          <button class="icon-btn tiny" id="viz-style" title="Visualizer style: bars — click to cycle"><svg><use href="#i-sliders"/></svg></button>
+          <button class="icon-btn tiny" id="viz-toggle" title="Turn the visualizer on or off"><svg><use href="#i-wave"/></svg></button>
+          <span class="dot" id="np-dot"></span>
+        </span>
+      </div>
+
+      <div class="np-top">
+        <div class="np-cover" id="np-cover"><svg><use href="#i-music"/></svg></div>
+        <div class="np-meta">
+          <div class="np-title" id="np-title">Nothing yet</div>
+          <div class="np-artist" id="np-artist">Ask me for something to play</div>
+        </div>
+      </div>
+
+      <div class="np-visual">
+        <canvas class="np-wave" id="np-wave" height="54" aria-label="Live waveform of the current track"></canvas>
+      </div>
+
+      <div class="resume-row" id="np-resume" hidden>
+        <button class="resume-play" id="np-resume-play" type="button"
+                title="Put the last queue back and jump to where it stopped">
+          <svg><use href="#i-play"/></svg>
+          <span class="resume-text">
+            <span class="resume-label">Continue where you left off</span>
+            <span class="resume-what" id="np-resume-what"></span>
+          </span>
+        </button>
+        <button class="icon-btn tiny" id="np-resume-forget" type="button"
+                title="Forget that session"><svg><use href="#i-trash"/></svg></button>
+      </div>
+
+      <div class="progress" id="np-progress" title="Click to seek">
+        <div class="bar" id="np-bar"></div>
+      </div>
+      <div class="times"><span id="np-time">0:00</span><span id="np-total">0:00</span></div>
+
+      <div class="transport">
+        <button class="icon-btn" data-action="prev" title="Previous"><svg><use href="#i-prev"/></svg></button>
+        <button class="icon-btn primary" data-action="toggle" id="np-toggle" title="Play / pause"><svg><use href="#i-play"/></svg></button>
+        <button class="icon-btn" data-action="next" title="Next"><svg><use href="#i-next"/></svg></button>
+        <button class="icon-btn" data-action="stop" title="Stop"><svg><use href="#i-stop"/></svg></button>
+      </div>
+
+      <div class="feedback">
+        <button class="chip-mini" data-feedback="like"><svg><use href="#i-thumb-up"/></svg> More like this</button>
+        <button class="chip-mini" data-feedback="dislike"><svg><use href="#i-thumb-down"/></svg> Less</button>
+      </div>
+
+      <div class="volume">
+        <svg><use href="#i-bolt"/></svg>
+        <input type="range" id="volume" min="0" max="100" value="70" aria-label="Volume">
+        <span id="volume-label">70</span>
+      </div>
+    </section>
+
+    <div class="statsline">
+      <span id="stats">—</span>
+      <button class="link" id="index-chip" hidden
+              title="The library index is being rebuilt — click for the details">indexing…</button>
+      <button class="link" id="reload-library" title="Re-read the inventory">refresh</button>
+    </div>
+
+    <section class="panel lyrics-panel" id="panel-lyrics" hidden>
+      <div class="section-head">
+        <span class="label">Lyrics</span>
+        <span class="section-actions">
+          <span class="lyrics-meta" id="lyrics-meta"></span>
+          <button class="lyrics-nudge" id="lyrics-earlier" type="button"
+                  title="The lines come too late: show them half a second earlier">−0.5 s</button>
+          <button class="lyrics-nudge" id="lyrics-later" type="button"
+                  title="The lines come too early: show them half a second later">+0.5 s</button>
+          <button class="icon-btn tiny" id="lyrics-export" type="button"
+                  title="Write these timed lyrics next to the song as an .lrc file for other players"><svg><use href="#i-lrc"/></svg></button>
+          <button class="icon-btn tiny" id="lyrics-transcribe" type="button"
+                  title="Transcribe this song locally (Whisper on this machine)"><svg><use href="#i-sparkle"/></svg></button>
+          <button class="icon-btn tiny" id="lyrics-next" type="button"
+                  title="Transcribe the next 25 songs that have no lyrics yet (the footer chip runs the whole library)"><svg><use href="#i-plus"/></svg></button>
+        </span>
+      </div>
+      <div class="lyrics-lines" id="lyrics-lines"></div>
+    </section>
+
+    <section class="panel queue-panel" id="panel-queue" hidden>
+      <div class="section-head">
+        <span class="label">Up next</span>
+        <span class="section-actions">
+          <span class="queue-meta" id="queue-meta"></span>
+          <button class="icon-btn tiny" id="queue-refresh" type="button"
+                  title="Read the queue again"><svg><use href="#i-sparkle"/></svg></button>
+        </span>
+      </div>
+      <div class="queue-own" id="queue-own" hidden>
+        <span class="queue-own-name" id="queue-own-name"></span>
+        <span class="section-actions">
+          <form class="queue-own-form" id="queue-own-form" hidden>
+            <input type="text" id="queue-own-input" maxlength="60"
+                   placeholder="Playlist name" />
+            <button type="submit" class="chip" id="queue-own-keep">Keep</button>
+          </form>
+          <button class="chip" id="queue-own-save" type="button"
+                  title="Keep this ad-hoc queue as a playlist">Save</button>
+          <button class="chip" id="queue-own-discard" type="button"
+                  title="Remove this ad-hoc queue (the music stays)">Remove</button>
+        </span>
+      </div>
+      <ol class="queue-list" id="queue-list"></ol>
+    </section>
+
+    <section class="panel grow" id="panel-playlists">
+      <div class="section-head">
+        <span class="label">Playlists</span>
+        <button class="link" id="new-playlist" title="Create a playlist in the chat">new</button>
+      </div>
+      <div class="playlist-list" id="playlist-list"></div>
+    </section>
+
+    <div class="sidebar-foot">
+      <button class="ghost-btn" id="planner-toggle" title="Switch the optional language model">
+        <svg><use href="#i-brain"/></svg><span id="planner-label">planner</span>
+      </button>
+      <button class="ghost-btn" id="quit-btn" title="Stop the local server">
+        <svg><use href="#i-close"/></svg> quit
+      </button>
+    </div>
+  </aside>
+
+  <!-- ------------------------------------------------------------------ -->
+  <main class="main">
+
+    <header class="topbar">
+      <div class="topbar-title">
+        <svg><use href="#i-sparkle"/></svg>
+        <div>
+          <strong>Chat</strong>
+          <span id="topbar-sub">ask for music, make a playlist, import a song</span>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <button class="btn" id="btn-search" title="Search the library (Ctrl+F)"><svg><use href="#i-search"/></svg> Search</button>
+        <button class="btn" id="btn-psycho" title="Show the properties of the current song as a net diagram"><svg><use href="#i-brain"/></svg> Profile</button>
+        <button class="btn" id="btn-activity"><svg><use href="#i-wave"/></svg> Activity</button>
+        <button class="btn" id="btn-import" hidden title="Import audio from the optional import module"><svg><use href="#i-import"/></svg> Import</button>
+        <button class="btn" id="btn-skills"><svg><use href="#i-list"/></svg> Skills</button>
+        <button class="btn icon" id="btn-settings" title="Settings: music folder, sound profile, visualizer"><svg><use href="#i-gear"/></svg></button>
+        <button class="btn icon" id="btn-clear" title="Clear the conversation"><svg><use href="#i-trash"/></svg></button>
+      </div>
+    </header>
+
+    <div class="conn-banner" id="conn-banner" role="status" hidden></div>
+
+    <div class="transcript-wrap">
+      <div class="transcript" id="transcript" aria-live="polite"></div>
+      <div class="scroll-bottom" id="scroll-bottom" hidden>↓ new messages</div>
+    </div>
+
+    <div class="composer-wrap">
+      <div class="chips" id="chips"></div>
+      <form class="composer" id="composer" autocomplete="off">
+        <textarea id="prompt" rows="1" placeholder="Tell me what to play, or ask for a playlist…"
+                  aria-label="Message"></textarea>
+        <button type="button" class="send mic" id="btn-voice"
+                title="Speak a request (Ctrl+Shift+V) — transcribed locally"
+                aria-label="Voice input" hidden>
+          <svg><use href="#i-mic"/></svg>
+        </button>
+        <button type="submit" class="send" id="send" title="Send (Enter)">
+          <svg><use href="#i-send"/></svg>
+        </button>
+      </form>
+      <div class="hint"><kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> newline · <kbd>Ctrl</kbd>+<kbd>K</kbd> focus · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> speak · <kbd>Ctrl</kbd>+<kbd>L</kbd> clear</div>
+    </div>
+
+    <footer class="statusbar">
+      <span class="status-left" id="status-line">idle — ask for something to play</span>
+      <span class="status-right"><span class="work" id="work"></span><span id="status-meta"></span></span>
+    </footer>
+  </main>
+</div>
+
+<!-- -------------------------------------------------------------------- -->
+<div class="overlay" id="modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <header class="modal-head">
+      <h2 id="modal-title">Import audio</h2>
+      <button class="icon-btn" id="modal-close" title="Close"><svg><use href="#i-close"/></svg></button>
+    </header>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

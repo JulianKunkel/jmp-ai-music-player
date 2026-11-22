@@ -1,0 +1,55 @@
+# The repository is borrowed from the folder above when this file is used by
+# hand:
+#
+#   docker compose -f application/compose.yaml up -d
+#   docker compose -f application/compose.yaml exec music music play Bands
+#
+# `application/install-desktop.sh` does not use this file: it generates its own
+# compose project in the app folder with *your* music folder, uid/gid and
+# sound device baked in.
+
+name: julians-music-app
+
+services:
+  music:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: julians-music-app:latest
+    container_name: julians-music-app
+    working_dir: /library
+    # run as the host user so files in the mount keep their owner
+    user: "${UID:-1000}:${GID:-1000}"
+    # the chat window: the server runs here, the browser runs on the host and
+    # reaches it through this loopback-only mapping
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      # the library (this checkout) — change the left side for another folder
+      - ..:/library
+      # Sound needs one path through to the host (see application/README.md):
+      #  * PulseAudio / PipeWire-Pulse — mount the socket *and* the cookie,
+      #    then add PULSE_COOKIE=/tmp/pulse-cookie below:
+      # - ${XDG_RUNTIME_DIR:-/run/user/1000}/pulse:/run/user/1000/pulse
+      # - ${HOME}/.config/pulse/cookie:/tmp/pulse-cookie:ro
+      #  * with WITH_CLEMENTINE=true, the X11 socket as well:
+      # - /tmp/.X11-unix:/tmp/.X11-unix
+    environment:
+      - HOME=/tmp
+      - MPV_SOCKET=/tmp/mpv.sock
+      - MPV_LOG=/tmp/mpv.log
+      # sound: the host's PulseAudio socket. `alsa` works with /dev/snd.
+      - PULSE_SERVER=unix:/run/user/1000/pulse/native
+      # - PULSE_COOKIE=/tmp/pulse-cookie
+      - MPV_AO=${MPV_AO:-pulse}
+      # - DISPLAY=:0
+    # ALSA fallback: remove the comment when no PulseAudio runs on the host
+    # devices:
+    #   - /dev/snd:/dev/snd
+    stdin_open: true
+    tty: true
+    # keep the container up so `docker exec` can reach the mpv daemon;
+    # this replaces the image entrypoint on purpose (`sleep` is not a command
+    # of the music CLI, and `docker exec` bypasses the entrypoint anyway)
+    entrypoint: ["sleep", "infinity"]
+    restart: unless-stopped

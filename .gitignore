@@ -1,0 +1,26 @@
+# Python byte code
+__pycache__/
+*.py[cod]
+*.pyo
+
+# virtual environments (the installer builds its own)
+.venv/
+venv/
+env/
+
+# install/run artefacts
+*.log
+*.bak
+*.tmp
+
+# editor / OS noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# optional download modules: their own repositories, compiled at build time
+download-modules/
+lib/modules/
+.build-modules/*
+!.build-modules/.keep
