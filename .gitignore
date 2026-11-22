@@ -28,3 +28,7 @@ lib/modules/
 # Debian package build output (dist/*.deb is uploaded as a release asset)
 build/
 dist/
+
+# GitHub token for publish-release.sh — never commit it
+.secret
+*.secret
