@@ -1,3 +1,17 @@
+jmp-ai-music-player (1.1.6-1) unstable; urgency=medium
+
+  * A media key is never a silent no-op any more.  Play/pause, back and
+    forward now start what was playing last when the player is stopped
+    (the same continue-last-session path as the window's Continue row), so
+    the play key makes music again instead of answering "Toggled." into a
+    quiet room.
+  * The back key restarts the current track when it is more than three
+    seconds in, or when the queue is at its first entry, instead of stopping
+    at the first entry.  Forward at the end of the queue says so.
+  * Pause with nothing to pause answers honestly instead of faking a pause.
+
+ -- Julian M. Kunkel <julian.kunkel@gwdg.de>  Sun, 22 Nov 2026 17:55:00 +0100
+
 jmp-ai-music-player (1.1.5-1) unstable; urgency=medium
 
   * The MPRIS handover between window and agent is now real: the native window

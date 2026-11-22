@@ -59,6 +59,10 @@ RADIO_EVERY = 5.0
 ENDLESS_LOW = 1
 ENDLESS_EVERY = 5.0
 
+#: how far into a track the back key must be before it restarts the track
+#: instead of stepping to the previous entry — the usual remote/player rule
+PREV_RESTART_S = 3.0
+
 PY = sys.executable
 
 
@@ -1961,6 +1965,38 @@ class Engine:
             label = "Muted" if action == "mute" else "Sound on"
             return Reply(label if ok else message,
                          error=not ok, tool="player")
+        # A media key must never be a silent no-op: a stopped player has no
+        # pause flag to toggle and no previous entry to step back to, so the
+        # key used to answer "Toggled." and leave the room quiet.  Play,
+        # prev and next start what was playing last instead (the same
+        # continue-last-session path as the window's Continue row); prev also
+        # restarts the current track when it is well past its start, which is
+        # what a remote's back button does.
+        before = self.player.status() or {}
+        idle = (not before) or bool(before.get("idle")) or not int(
+            before.get("playlist_count") or 0)
+        if action in {"toggle", "resume", "prev", "next"} and idle:
+            reply = self.resume_last()
+            if not reply.error:
+                return reply
+            return Reply("Nothing is playing right now — say “play …” and "
+                         "I'll start something.", tool="player")
+        if action == "pause" and idle:
+            return Reply("Nothing is playing right now — say “play …” and "
+                         "I'll start something.", tool="player")
+        if action == "prev":
+            elapsed = float(before.get("position")
+                            or before.get("time") or 0)
+            pos = int(before.get("playlist_pos") or 0)
+            if elapsed > PREV_RESTART_S or pos <= 0:
+                # more than a few seconds in, or the queue is at its first
+                # entry: back means this track from the top, not silence
+                ok, message = self.player.command("seek_abs", 0.0)
+                if ok:
+                    self.poll()
+                    self.save_session(force=True)
+                    return Reply("Restarted this track.", tool="player")
+                return Reply(message, error=True, tool="player")
         ok, message = self.player.command(action)
         labels = {"pause": "Paused.", "resume": "Continuing.",
                   "toggle": "Toggled.", "stop": "Stopped.",
@@ -1968,6 +2004,12 @@ class Engine:
         if ok:
             self.poll()
             self.save_session(force=True)
+            if action == "next":
+                after = self.player.status() or {}
+                if after.get("idle") or not int(
+                        after.get("playlist_count") or 0):
+                    return Reply("That was the end of the queue — "
+                                 "“continue” plays it again.", tool="player")
             return Reply(labels.get(action, action), tool="player")
         if "nothing is playing" in message.casefold():
             # a harmless state, not a failure: say what to do instead

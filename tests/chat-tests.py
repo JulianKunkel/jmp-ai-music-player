@@ -2496,6 +2496,190 @@ def check_pwa(work: Path) -> None:
         shutil.rmtree(lib, ignore_errors=True)
 
 
+def check_media_transport(work: Path) -> None:
+    """A media key never leaves the room silent.
+
+    Reported 2026-11-22: the play/pause key did nothing once playback had
+    stopped, and the back key answered ``Toggled.``/nothing at all while the
+    app offered "Continue — start where you left off".  A remote's keys must
+    therefore *start* what was playing last (play, back, forward), and back
+    must restart the current track when it is well past its start instead of
+    stopping at the first queue entry.
+    """
+    root = work / "media-library"
+    rows = []
+    for rel, title in (("Artists/Wild_Silk/dreams_doubts/10_Beside.mp3",
+                        "Beside the old tree"),
+                       ("Artists/Wild_Silk/dreams_doubts/11_Next.mp3",
+                        "Another one")):
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x")
+        rows.append({"rel_path": rel, "title": title, "artist": "Wild Silk",
+                     "albumartist": "Wild Silk", "album": "dreams_doubts",
+                     "genre": "Rock", "grouping": "Bands", "duration_s": 388,
+                     "size_bytes": 1000, "bitrate": 192000, "ext": ".mp3"})
+    inv = root / "library-work" / "inventory" / "files.jsonl"
+    inv.parent.mkdir(parents=True, exist_ok=True)
+    inv.write_text("".join(json.dumps(row) + "\n" for row in rows),
+                   encoding="utf-8")
+    engine = Engine(root=root, use_llm=False)
+    from chat import session
+
+    class Remote:
+        """mpv over a queue, with the states a media key can meet."""
+
+        def __init__(self):
+            self.state = {"idle": True, "pause": False, "time": 0.0,
+                          "playlist_count": 0, "playlist_pos": -1,
+                          "volume": 100.0}
+            self.played: list[str] = []
+            self.commands: list[tuple] = []
+
+        def status(self):
+            return dict(self.state)
+
+        def play(self, target, append=False, shuffle=False):
+            self.played.append(str(target))
+            self.state.update({"idle": False, "pause": False, "time": 0.0,
+                               "playlist_count": 2, "playlist_pos": 0})
+            return True, ""
+
+        def command(self, action, value=None):
+            self.commands.append((action, value))
+            if action == "stop":
+                self.state.update({"idle": True, "playlist_count": 0,
+                                   "playlist_pos": -1, "time": 0.0})
+            elif action == "seek_abs":
+                self.state["time"] = float(value or 0)
+            elif action == "toggle":
+                self.state["pause"] = not self.state.get("pause")
+            elif action in {"next", "playlist-next"}:
+                pos = int(self.state.get("playlist_pos") or 0) + 1
+                if pos >= 2:
+                    self.state.update({"idle": True, "playlist_count": 0,
+                                       "playlist_pos": -1})
+                else:
+                    self.state["playlist_pos"] = pos
+            elif action in {"prev", "playlist-prev"}:
+                self.state["playlist_pos"] = max(
+                    0, int(self.state.get("playlist_pos") or 0) - 1)
+            return True, ""
+
+        def queue_from(self, limit=200):
+            return []
+
+        def running(self):
+            return True
+
+        def status_line(self, root=None):
+            return "remote"
+
+    remote = Remote()
+    real_player, was_dry = engine.player, engine.dry_run
+    engine.player, engine.dry_run = remote, False
+    try:
+        # something to continue: a real session file, as the app would have
+        session.clear(root)
+        rel = rows[0]["rel_path"]
+        session.save(root, {"kind": "track", "target": rel, "rel": rel,
+                            "position": 42.0, "index": 0, "count": 2,
+                            "label": "Wild Silk — Beside the old tree · 0:42"})
+        check("the session to continue is stored",
+              (session.load(root) or {}).get("rel") == rel,
+              str(session.load(root)))
+
+        # -- play/pause while stopped starts the last song ------------------
+        reply = engine.skill_transport({"action": "toggle"}, "toggle")
+        check("play/pause while stopped starts the last song",
+              not reply.error and remote.played
+              and remote.played[-1].endswith("10_Beside.mp3"),
+              f"{reply.text!r} played={remote.played}")
+        check("that answer says what is playing",
+              "Wild Silk" in reply.text or "Continuing" in reply.text,
+              reply.text[:160])
+        check("play/pause while stopped does not pretend to toggle",
+              ("toggle", None) not in remote.commands, str(remote.commands))
+
+        # -- a playing player still pauses --------------------------------
+        remote.commands.clear()
+        remote.state.update({"idle": False, "playlist_count": 2,
+                             "playlist_pos": 0, "pause": False, "time": 1.0})
+        reply = engine.skill_transport({"action": "toggle"}, "toggle")
+        check("play/pause while playing pauses",
+              ("toggle", None) in remote.commands and not reply.error,
+              f"{remote.commands} {reply.text!r}")
+
+        # -- back: restart a track that is under way -----------------------
+        remote.commands.clear()
+        remote.state.update({"time": 55.0, "playlist_pos": 1})
+        reply = engine.skill_transport({"action": "prev"}, "prev")
+        check("back restarts a track that is already running",
+              ("seek_abs", 0.0) in remote.commands
+              and remote.state["time"] == 0.0 and not reply.error,
+              f"{remote.commands} {reply.text!r}")
+        check("back says it restarted",
+              "restart" in reply.text.casefold(), reply.text[:120])
+
+        # -- back at the first entry also restarts instead of stopping ------
+        remote.commands.clear()
+        remote.state.update({"time": 1.0, "playlist_pos": 0, "idle": False,
+                             "playlist_count": 2})
+        engine.skill_transport({"action": "prev"}, "prev")
+        check("back on the first entry restarts it, not silence",
+              ("seek_abs", 0.0) in remote.commands
+              and not remote.state.get("idle"),
+              f"{remote.commands} {remote.state}")
+
+        # -- back near the start steps to the previous entry ---------------
+        remote.commands.clear()
+        remote.state.update({"time": 1.0, "playlist_pos": 1, "idle": False})
+        engine.skill_transport({"action": "prev"}, "prev")
+        check("back near the start steps to the previous entry",
+              ("prev", None) in remote.commands
+              and ("seek_abs", 0.0) not in remote.commands,
+              str(remote.commands))
+
+        # -- forward off the end of the queue is answered honestly ---------
+        remote.commands.clear()
+        remote.state.update({"time": 1.0, "playlist_pos": 1, "idle": False,
+                             "playlist_count": 2})
+        reply = engine.skill_transport({"action": "next"}, "next")
+        check("forward off the end says the queue ended",
+              "end of the queue" in reply.text.casefold() and not reply.error,
+              reply.text[:140])
+
+        # -- forward while stopped starts the last song --------------------
+        remote.played.clear()
+        remote.commands.clear()
+        engine.skill_transport({"action": "stop"}, "stop")
+        check("stop still stops", remote.state.get("idle") is True)
+        reply = engine.skill_transport({"action": "next"}, "next")
+        check("forward while stopped starts the last song",
+              remote.played and not reply.error,
+              f"{reply.text!r} played={remote.played}")
+        check("that answer says what plays next",
+              "Beside" in reply.text or "Wild Silk" in reply.text,
+              reply.text[:160])
+
+        # -- pause with nothing to pause is honest, not a silent no-op ------
+        remote.commands.clear()
+        remote.played.clear()
+        remote.state.update({"idle": True, "playlist_count": 0,
+                             "playlist_pos": -1, "time": 0.0})
+        session.clear(root)
+        reply = engine.skill_transport({"action": "pause"}, "pause")
+        check("pause without a session says nothing is playing",
+              "nothing is playing" in reply.text.casefold()
+              and not remote.played, reply.text[:160])
+        check("pause without a session does not touch the player",
+              not remote.commands, str(remote.commands))
+    finally:
+        engine.player, engine.dry_run = real_player, was_dry
+        session.clear(root)
+        engine.close()
+
+
 def check_window() -> None:
     """The native window opens large enough and cannot be shrunk to clip.
 
@@ -6743,6 +6927,7 @@ def main() -> int:
         check_explain(work)
         check_pwa(work)
         check_window()
+        check_media_transport(work)
         check_journey(work)
         check_library_data(work)
 
