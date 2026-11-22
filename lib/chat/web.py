@@ -54,6 +54,7 @@ from . import loudness
 from . import lrc
 from . import psycho_job
 from . import radio
+from . import endless
 from . import settings as setting_registry
 from . import tagedit
 from . import voice
@@ -478,6 +479,10 @@ class ChatService:
                 "index": self._index_summary(),
                 # radio mode: whether the queue tops itself up, and from what
                 "radio": radio.info(self.root, engine.catalog),
+                # endless mode: grows from whatever just played, repeats when
+                # nothing fitting is left
+                "endless": endless.info(self.root, engine.catalog),
+                "shuffle_mode": engine.shuffle_mode(),
                 "library_data": self._library_summary(),
                 # download support is an optional build-time module; the page
                 # hides its import button and queue when this is false
@@ -687,6 +692,36 @@ class ChatService:
             return {"ok": not reply.error, "note": reply.text,
                     "action": action,
                     "radio": radio.info(self.root, self.engine.catalog)}
+
+    # -- endless mode and shuffle -----------------------------------------
+
+    def endless_state(self) -> dict:
+        with self.lock:
+            return endless.info(self.root, self.engine.catalog)
+
+    def endless_action(self, action: str = "status") -> dict:
+        """The window's endless button: the same skill the chat uses."""
+        action = str(action or "status").casefold()
+        if action not in {"start", "on", "stop", "off", "status", "more"}:
+            return {"error": f"unknown endless action: {action}"}
+        if action == "on":
+            action = "start"
+        if action == "off":
+            action = "stop"
+        with self.lock:
+            reply = self.engine.skill_endless({"action": action}, action)
+            return {"ok": not reply.error, "note": reply.text,
+                    "action": action,
+                    "endless": endless.info(self.root, self.engine.catalog)}
+
+    def shuffle_action(self, on: bool) -> dict:
+        """Arm or disarm shuffle for the next playlist (a stored setting)."""
+        action = "shuffle_on" if on else "shuffle_off"
+        with self.lock:
+            reply = self.engine.skill_transport({"action": action},
+                                                "window button")
+            return {"ok": not reply.error, "on": self.engine.shuffle_mode(),
+                    "note": reply.text}
 
     # -- settings ----------------------------------------------------------
 
@@ -1655,7 +1690,8 @@ class ChatService:
     def transport(self, action: str, value=None) -> dict:
         allowed = {"pause", "resume", "toggle", "stop", "next", "prev",
                    "volume", "volume_delta", "seek", "seek_abs", "restart",
-                   "mute", "speed", "shuffle", "repeat", "position", "status"}
+                   "mute", "speed", "shuffle", "shuffle_on", "shuffle_off",
+                   "repeat", "position", "status"}
         if action not in allowed:
             return {"ok": False, "text": f"unknown action: {action}",
                     "error": True}
@@ -1671,9 +1707,12 @@ class ChatService:
             return {"ok": not reply.error, "text": reply.text,
                     "html": md_to_html(reply.text), "error": reply.error}
 
-    def play(self, target: str) -> dict:
+    def play(self, target: str, shuffle: bool | None = None) -> dict:
+        args: dict = {"target": target}
+        if shuffle:
+            args["shuffle"] = True
         with self.lock:
-            reply = self.engine.skill_play({"target": target}, f"play {target}")
+            reply = self.engine.skill_play(args, f"play {target}")
             return _reply(reply)
 
     # -- continue where you left off --------------------------------------
@@ -2307,6 +2346,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/radio":
             self._json(self.service.radio_state())
             return
+        if path == "/api/endless":
+            self._json(self.service.endless_state())
+            return
         if path == "/api/tags":
             query = parse_qs(parsed.query)
             rel = (query.get("rel") or [""])[0]
@@ -2502,7 +2544,8 @@ class Handler(BaseHTTPRequestHandler):
             if not target:
                 self._json({"error": "what should I play?"}, 400)
                 return
-            self._json(self.service.play(target))
+            self._json(self.service.play(target,
+                                         bool(data.get("shuffle")) or None))
             return
         if path == "/api/resume":
             self._json(self.service.resume())
@@ -2571,6 +2614,13 @@ class Handler(BaseHTTPRequestHandler):
             self._json(self.service.radio_action(
                 str(data.get("action") or "status"),
                 str(data.get("target") or "")))
+            return
+        if path == "/api/endless":
+            self._json(self.service.endless_action(
+                str(data.get("action") or "status")))
+            return
+        if path == "/api/shuffle":
+            self._json(self.service.shuffle_action(bool(data.get("on"))))
             return
         if path == "/api/tags":
             self._json(self.service.set_tags(data))

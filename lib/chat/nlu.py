@@ -1093,7 +1093,8 @@ def plan(text: str, ctx: Context, catalog, profile=None) -> Plan | None:
     if (_has(f, "more like this", "more of this", "more like that", "mehr davon",
              "nochmal sowas", "noch so etwas", "similar", "ähnliches")
             or re.search(r"(?:^|\s)(?:more|mehr)(?:\s|$)", f)) \
-            and not _has(f, "youtube", "you tube", "yt", "radio", "sender") \
+            and not _has(f, "youtube", "you tube", "yt", "radio", "sender",
+                         "endless", "endlos") \
             and not psycho_adjustments(original):
         seed_track = _current_track(ctx, catalog)
         if seed_track is not None:
@@ -1289,6 +1290,37 @@ def plan(text: str, ctx: Context, catalog, profile=None) -> Plan | None:
             return Plan("lyrics", {"action": "show", "track": ""},
                         confidence=0.85)
 
+    # -- endless mode -----------------------------------------------------
+    #
+    # Endless follows the song that just played and repeats the queue when
+    # nothing fits.  The phrases need a mode word, so "Endless Love" stays a
+    # track and "play some rock" stays a play request.
+
+    endless_cue = _has(f, "endlos", "endlosmodus", "ohne ende",
+                       "never stop the music", "never stop playing",
+                       "keep the music going", "keep playing forever")
+    if not endless_cue and re.search(
+            r"\bendless\b(?:\s+(?:mode|modus|music|playback|queue))?", f):
+        endless_cue = (len(f.split()) <= 2
+                       or _has(f, "mode", "modus", "on", "off", "stop",
+                               "status", "keep", "more", "endlos"))
+    if endless_cue and not _has(f, "youtube", "download", "playlist",
+                                "playlists", "playliste", "spotify"):
+        keep_going = _has(f, "never stop the music", "never stop playing",
+                          "keep the music going", "keep playing forever",
+                          "ohne ende")
+        if _has(f, "status", "is endless", "is it on", "still on", "laeuft",
+                "lauft", "läuft", "is the endless"):
+            return Plan("endless", {"action": "status"}, confidence=0.9)
+        if not keep_going and _has(f, "off", "stop", "disable", "aus",
+                                   "beenden", "beende", "ausschalten",
+                                   "no longer"):
+            return Plan("endless", {"action": "stop"}, confidence=0.9)
+        if not keep_going and _has(f, "more", "mehr", "add", "nachschub",
+                                   "top up", "weiter"):
+            return Plan("endless", {"action": "more"}, confidence=0.85)
+        return Plan("endless", {"action": "start"}, confidence=0.9)
+
     # -- radio mode -------------------------------------------------------
     #
     # Radio is a mode, not a playback request: it keeps the queue topped up
@@ -1464,6 +1496,15 @@ def plan(text: str, ctx: Context, catalog, profile=None) -> Plan | None:
         return Plan("transport", {"action": "speed_delta", "value": -0.1},
                     confidence=0.8)
 
+    if _rx(r"\bshuffle\s+(?:mode|modus|playback)\b", f) \
+            or _rx(r"\b(?:shuffle|zufall)\b[^.]*\b(?:always|jedes mal|"
+                   r"standard|default)\b", f) \
+            or _rx(r"\b(?:always|immer)\b[^.]*\b(?:shuffle|zufall)\b", f):
+        if _has(f, "off", "disable", "aus", "ausschalten", "stop", "no",
+                "kein", "keine"):
+            return Plan("transport", {"action": "shuffle_off"},
+                        confidence=0.9)
+        return Plan("transport", {"action": "shuffle_on"}, confidence=0.9)
     if re.search(r"(?:shuffle|zufall|zufallig|zufaellig)\b.*\b"
                  r"(?:on|enable|einschalten|ein)\b", f) \
             or re.search(r"\b(?:turn on|enable|aktiviere)\b.*\b"

@@ -19,7 +19,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from . import index_job, library_job, lrc, lyrics_job, loudness, psycho_job, radio
+from . import (endless, index_job, library_job, lrc, lyrics_job, loudness,
+               psycho_job, radio)
 from . import downloads as youtube, recent, session
 from . import arrivals as arrivals_mod
 from . import duplicates as duplicates_mod
@@ -52,6 +53,11 @@ RADIO_LOW = 1
 
 #: how often the poll may add a batch, in seconds (the poll runs every 2 s)
 RADIO_EVERY = 5.0
+
+#: endless mode tops the queue up at the same point, but follows the song that
+#: is playing instead of a fixed seed
+ENDLESS_LOW = 1
+ENDLESS_EVERY = 5.0
 
 PY = sys.executable
 
@@ -167,6 +173,8 @@ class Engine:
         self._radio_rng = random.Random()
         #: when the radio last appended a batch
         self._radio_at = 0.0
+        #: when endless mode last appended a batch
+        self._endless_at = 0.0
         #: the queue the last play handed to mpv, so "continue" can rebuild it
         self._queue_target: dict | None = None
         #: a temp queue written just before the play that used it
@@ -1203,6 +1211,8 @@ class Engine:
             "count": total,
             "position": at,
             "shuffle": bool(status.get("shuffle")),
+            "endless": endless.active(self.root),
+            "endless_repeat": bool(endless.load(self.root).get("repeat")),
             "entries": entries,
             "more": max(0, total - len(entries)),
             "own": self._own_view(),
@@ -1232,7 +1242,7 @@ class Engine:
     def skill_play(self, args: dict, request: str) -> Reply:
         if args.get("resume"):
             return self.resume_last()
-        shuffle = bool(args.get("shuffle"))
+        shuffle = bool(args.get("shuffle")) or self.shuffle_mode()
         append = bool(args.get("append"))
         whole = bool(args.get("whole_library"))
         target = str(args.get("target") or "").strip()
@@ -1490,6 +1500,8 @@ class Engine:
         state = radio.load(self.root)
         if not self.dry_run:
             state = radio.start(self.root, seed.rel, label, seed.genre)
+            if endless.active(self.root):
+                endless.stop(self.root)   # one mode owns the queue
         avoid = set(state.get("played") or [])
         status = self.player.status() or {}
         playing = "" if status.get("idle") else self._rel_of(
@@ -1608,6 +1620,8 @@ class Engine:
         """Top the queue up when it is about to run out (called from poll)."""
         if self.dry_run or not status or status.get("idle"):
             return
+        if endless.active(self.root):
+            return                      # endless mode owns the queue
         count = int(status.get("playlist_count") or 0)
         pos = int(status.get("playlist_pos") or 0)
         if not count or count - pos > RADIO_LOW:
@@ -1620,8 +1634,197 @@ class Engine:
         self._radio_at = now
         self._radio_extend()
 
+    # -- endless mode ------------------------------------------------------
+    #
+    # Radio mode grows one queue from one seed.  Endless mode follows whatever
+    # is playing: each top-up sounds like the song that just ran, so the queue
+    # drifts.  When nothing fitting is left it repeats the queue instead of
+    # going silent.
+
+    def skill_endless(self, args: dict, request: str) -> Reply:
+        """A queue that keeps growing from the track that just played."""
+        action = str(args.get("action") or "start").casefold()
+        note = ("  (dry run — nothing was stored.)" if self.dry_run else "")
+        if action in {"off", "stop", "disable"}:
+            was_repeating = endless.load(self.root).get("repeat")
+            was = False if self.dry_run else endless.stop(self.root)
+            if was_repeating and self.player.running():
+                self.player.command("repeat_off")
+            if not self.dry_run and not was:
+                return Reply("Endless mode is already off.", tool="endless")
+            return Reply("Endless mode off.  The queue that is playing stays "
+                         "as it is; nothing new is added." + note,
+                         tool="endless")
+        if action in {"status", "show"}:
+            state = endless.load(self.root)
+            if not state.get("on"):
+                return Reply("Endless mode is off.  Say “endless mode” to "
+                             "keep the music going without asking again.",
+                             tool="endless · status")
+            seed = self.catalog.track(str(state.get("last") or ""))
+            lines = ["**Endless mode on** · grows from the song that just "
+                     "played"]
+            if seed is not None:
+                lines.append(f"Last anchor: {_escape(seed.label())}")
+            if state.get("repeat"):
+                lines.append("The queue is repeating because no fitting "
+                             "track was left.")
+            lines.append(f"{len(state.get('played') or []):,} tracks picked "
+                         "so far.")
+            return Reply("\n\n".join(lines), tool="endless · status")
+        if action == "more":
+            if not self.dry_run and not endless.active(self.root):
+                return Reply("Endless mode is off, so there is nothing to top "
+                             "up — say “endless mode” first.", error=True,
+                             tool="endless")
+            added = self._endless_extend()
+            if not added:
+                return Reply("Nothing fitting was left, so the queue now "
+                             "repeats instead of stopping." if not self.dry_run
+                             else "A dry run cannot top anything up.",
+                             tool="endless · more")
+            lines = [f"**Added {len(added)} more**"] + [
+                f"- {_escape(track.who)} — {_escape(track.name)}"
+                for rel in added
+                for track in [self.catalog.track(rel)] if track is not None]
+            return Reply("\n".join(lines), tool="endless · more")
+
+        # -- on ------------------------------------------------------------
+        state = endless.load(self.root)
+        seed = self._playing_track()
+        if seed is None:
+            stored = self.catalog.track(str(state.get("last") or ""))
+            seed = stored if stored is not None else self._radio_seed("")
+        if seed is None:
+            return Reply("There is nothing to grow the queue from — the "
+                         "library has no playable track yet.", error=True,
+                         tool="endless")
+        if not self.dry_run:
+            endless.start(self.root, seed.rel)
+            if radio.active(self.root):
+                radio.stop(self.root)     # one mode owns the queue
+        status = self.player.status() or {}
+        playing = "" if status.get("idle") else self._rel_of(
+            str(status.get("file") or ""))
+        ok, message = True, ""
+        if playing != seed.rel:
+            ok, message = self._play_path(self.root / seed.rel)
+        picks = self._endless_extend(seed.rel)
+        head = "**Endless mode on** · " + _escape(seed.label())
+        lines = [head, ""]
+        if picks:
+            lines.append("Up next:")
+            lines += [f"- {_escape(track.who)} — {_escape(track.name)}"
+                      for rel in picks
+                      for track in [self.catalog.track(rel)]
+                      if track is not None]
+        else:
+            lines.append("_Nothing fitting was found, so the queue repeats "
+                         "itself when it ends._")
+        lines.append("")
+        lines.append("▶ playing" if ok and not self.dry_run
+                     else f"_{message or 'dry run — nothing started'}_")
+        return Reply("\n".join(lines),
+                     tracks=[self.catalog.track(rel) for rel in picks
+                             if self.catalog.track(rel) is not None],
+                     played=bool(ok and not self.dry_run), tool="endless")
+
+    def _endless_seed(self, status: dict | None = None) -> str:
+        """The track the next batch should sound like: what just played."""
+        status = status if status is not None else (self.player.status() or {})
+        rel = self._rel_of(str(status.get("file") or "")) if status else ""
+        if rel:
+            endless.set_last(self.root, rel)
+            return rel
+        return str(endless.load(self.root).get("last") or "")
+
+    def _endless_extend(self, seed_rel: str = "",
+                        limit: int | None = None) -> list[str]:
+        """Append a batch that fits ``seed_rel``; repeat when nothing fits."""
+        if self.dry_run:
+            return []
+        state = endless.load(self.root)
+        seed = seed_rel or str(state.get("last") or "")
+        if not seed:
+            seed = self._endless_seed()
+        if not seed:
+            return []
+        avoid = set(state.get("played") or [])
+        for _index, entry in self.player.queue_from(limit=400):
+            rel = self._rel_of(str(entry))
+            if rel:
+                avoid.add(rel)
+        picks = radio.candidates(self.catalog, self.psycho, seed,
+                                 limit or endless.BATCH, avoid=avoid,
+                                 rng=self._radio_rng)
+        added: list[str] = []
+        for rel in picks:
+            started, _message = self.player.play(str(self.root / rel),
+                                                 append=True)
+            if started:
+                added.append(rel)
+        if not added:
+            # no fitting track left: keep the music going by repeating the
+            # queue, a playback setting only (never a rewritten file)
+            if self.player.running():
+                self.player.command("repeat_all")
+                endless.mark_repeat(self.root, True)
+            return []
+        endless.remember(self.root, added)
+        endless.set_last(self.root, seed)
+        if state.get("repeat"):
+            if self.player.running():
+                self.player.command("repeat_off")
+            endless.mark_repeat(self.root, False)
+        target = dict(self._queue_target or {})
+        entries = list(target.get("entries") or [])
+        entries.extend(rel for rel in added if rel not in entries)
+        target.update({
+            "kind": target.get("kind") or "temp",
+            "target": target.get("target") or seed,
+            "entries": entries,
+            "label": target.get("label") or "Endless",
+        })
+        self._queue_target = target
+        self.save_session(force=True)
+        return added
+
+    def _endless_tick(self, status: dict) -> None:
+        """Top the queue up at the end, following the song that just played."""
+        if self.dry_run or not status or status.get("idle"):
+            return
+        if radio.active(self.root):
+            return                      # radio owns the queue while it is on
+        if not endless.active(self.root):
+            return
+        if endless.load(self.root).get("repeat"):
+            return                      # already looping; nothing to add
+        count = int(status.get("playlist_count") or 0)
+        pos = int(status.get("playlist_pos") or 0)
+        if not count or count - pos > ENDLESS_LOW:
+            return
+        now = time.monotonic()
+        if now - self._endless_at < ENDLESS_EVERY:
+            return
+        self._endless_at = now
+        self._endless_extend(self._endless_seed(status))
+
+    def shuffle_mode(self) -> bool:
+        """Whether a playlist should play in random order (app setting)."""
+        return bool(self.profile.setting("shuffle_mode", False))
+
+    def set_shuffle_mode(self, on: bool) -> bool:
+        """Remember the shuffle preference; writes only the app profile."""
+        on = bool(on)
+        if self.dry_run:
+            return on
+        self.profile.set_setting("shuffle_mode", on)
+        return on
+
     def skill_transport(self, args: dict, request: str) -> Reply:
         action = str(args.get("action") or "status").casefold()
+        if action == "shuffle":
+            action = "shuffle_on"
         if action == "status":
             status = self.player.status()
             if not status or status.get("idle"):
@@ -1665,49 +1868,87 @@ class Engine:
             if value is None:
                 return Reply("How loud? Say a number from 0 to 100.",
                              error=True)
-            ok, message = self.player.command("volume", float(value))
-            return Reply(f"Volume {int(value)}%" if ok else message,
+            try:
+                level = float(value)
+            except (TypeError, ValueError):
+                return Reply(f"“{value}” is not a volume from 0 to 100.",
+                             error=True, tool="player")
+            ok, message = self.player.command("volume", level)
+            return Reply(f"Volume {int(round(level))}%" if ok else message,
                          error=not ok, tool="player")
         if action == "volume_delta":
-            delta = float(args.get("value") or 0)
+            try:
+                delta = float(args.get("value") or 0)
+            except (TypeError, ValueError):
+                return Reply("That is not a volume change.",
+                             error=True, tool="player")
             ok, message = self.player.command("volume_delta", delta)
             verb = "Louder" if delta > 0 else "Quieter"
-            return Reply(f"{verb} by {abs(int(delta))}%" if ok else message,
+            return Reply(f"{verb} by {abs(int(round(delta)))}%"
+                         if ok else message,
                          error=not ok, tool="player")
         if action == "seek":
             value = args.get("value")
-            ok, message = self.player.command("seek", float(value or 0))
-            return Reply(f"Jumped {value:+d} s" if ok else message,
+            try:
+                delta = float(value or 0)
+            except (TypeError, ValueError):
+                return Reply(f"“{value}” is not a number of seconds.",
+                             error=True, tool="player")
+            ok, message = self.player.command("seek", delta)
+            return Reply(f"Jumped {delta:+.0f} s" if ok else message,
                          error=not ok, tool="player")
         if action == "seek_abs":
-            value = float(args.get("value") or 0)
+            try:
+                value = float(args.get("value") or 0)
+            except (TypeError, ValueError):
+                return Reply("That is not a position in seconds.",
+                             error=True, tool="player")
             ok, message = self.player.command("seek_abs", value)
             return Reply(f"Jumped to {clock(value)}" if ok else message,
                          error=not ok, tool="player")
         if action == "speed":
-            value = float(args.get("value") or 1.0)
+            try:
+                value = float(args.get("value") or 1.0)
+            except (TypeError, ValueError):
+                return Reply("That is not a playback speed.",
+                             error=True, tool="player")
             ok, message = self.player.command("speed", value)
             return Reply(f"Speed {value:g}×" if ok else message,
                          error=not ok, tool="player")
         if action == "speed_delta":
             status = self.player.status() or {}
-            now = float(status.get("speed") or 1.0)
-            value = max(0.25, min(4.0, round(now + float(args.get("value") or 0), 2)))
+            try:
+                now = float(status.get("speed") or 1.0)
+                delta = float(args.get("value") or 0)
+            except (TypeError, ValueError):
+                return Reply("That is not a speed change.",
+                             error=True, tool="player")
+            value = max(0.25, min(4.0, round(now + delta, 2)))
             ok, message = self.player.command("speed", value)
             return Reply(f"Speed {value:g}×" if ok else message,
                          error=not ok, tool="player")
         if action == "position":
-            index = int(args.get("value") or 1)
+            try:
+                index = int(float(args.get("value") or 1))
+            except (TypeError, ValueError):
+                return Reply("That is not a queue position.",
+                             error=True, tool="player")
             ok, message = self.player.command("position", index)
             if ok:
                 self.save_session(force=True)
             return Reply(f"Jumped to queue entry {index}" if ok else message,
                          error=not ok, tool="player")
         if action in {"shuffle_on", "shuffle_off"}:
+            on = action == "shuffle_on"
+            self.set_shuffle_mode(on)
             ok, message = self.player.command(action)
-            label = "Shuffle on" if action == "shuffle_on" else "Shuffle off"
-            return Reply(label if ok else message,
-                         error=not ok, tool="player")
+            label = ("Shuffle on — playlists start in random order"
+                     if on else "Shuffle off")
+            # the preference is stored even with nothing playing, so the next
+            # playlist starts shuffled; only a real player error is a failure
+            if ok or "nothing is playing" in message.casefold():
+                return Reply(label, tool="player")
+            return Reply(message, error=True, tool="player")
         if action in {"repeat_all", "repeat_one", "repeat_off"}:
             ok, message = self.player.command(action)
             labels = {"repeat_all": "Repeating the queue",
@@ -4545,6 +4786,8 @@ class Engine:
             self._last_rel = rel
             self._last_pos = 0.0
             self._last_duration = 0.0
+            if endless.active(self.root):
+                endless.set_last(self.root, rel)
             track = self.catalog.track(rel)
             if track is not None:
                 self.ctx.current = track
@@ -4558,6 +4801,7 @@ class Engine:
         # file is never rewritten; the filter is just playback state.
         self._apply_loudness(rel)
         # radio mode: a queue that never runs dry
+        self._endless_tick(status)
         self._radio_tick(status)
         # remember where the playhead is, so a restart can pick it up (the
         # writer throttles itself: a few dozen bytes every 20 s, never a tag)

@@ -98,6 +98,8 @@ if [ -n "$MODULES" ]; then
         --clean --requirements >/dev/null
 else
     say "download module  none (open build: the player has no download feature)"
+    # a local module checkout must never leak into the open package
+    rm -rf "$STAGE/usr/lib/jmp/lib/modules"
 fi
 
 # ---- launcher, desktop entry, icon, man page ----------------------------

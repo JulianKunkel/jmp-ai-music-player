@@ -46,6 +46,11 @@ REGISTRY: dict[str, dict] = {
                  "value": "number for volume/seconds"},
         "handler": "skill_transport",
     },
+    "endless": {
+        "title": "Endless mode",
+        "args": {"action": "start|stop|status|more"},
+        "handler": "skill_endless",
+    },
     "make-playlist": {
         "title": "Make a playlist",
         "args": {"name": "playlist name", "moods": "list of moods",
@@ -187,7 +192,8 @@ REGISTRY: dict[str, dict] = {
 
 ORDER = ["make-playlist", "recommend", "play-music", "search-library",
          "rank-library", "lyrics", "show-playlists", "save-playlist",
-         "edit-playlist", "radio", "transport", "activity", "psycho-profile",
+         "edit-playlist", "radio", "endless", "transport", "activity",
+         "psycho-profile",
          "recent", "duplicates", "index-library", "library-data",
          "import-audio",
          "import-playlist", "add-file", "learn-preferences", "settings",

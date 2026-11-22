@@ -49,6 +49,7 @@ from chat import settings as setting_registry      # noqa: E402
 from chat import smart                             # noqa: E402
 from chat import stats as library_stats            # noqa: E402
 from chat import radio as radio_mod                 # noqa: E402
+from chat import endless as endless_mod             # noqa: E402
 from chat.web import ChatService, make_handler, md_to_html  # noqa: E402
 
 PASS = 0
@@ -3662,6 +3663,385 @@ def check_radio(work: Path) -> None:
     engine.close()
 
 
+def check_endless(work: Path) -> None:
+    """Endless mode, shuffle mode and the float transport formatting.
+
+    Endless grows the queue from the track that is playing *right now* (so the
+    batch drifts instead of returning to one seed), and repeats the queue when
+    nothing fitting is left.  The transport checks pin the regression that made
+    `POST /api/transport` answer 500 with `Unknown format 'd' for float`.
+    """
+    from chat.catalog import Track
+
+    root = work / "endless-library"
+    details = [
+        ("Artists/Eisenwerk/A/01.mp3", "Seed Song", "Eisenwerk", "Metal", 200),
+        ("Artists/Eisenwerk/A/02.mp3", "Same Album", "Eisenwerk", "Metal", 210),
+        ("Artists/Stahl/B/01.mp3", "Near One", "Stahl", "Metal", 240),
+        ("Artists/Stahl/B/02.mp3", "Near Two", "Stahl", "Metal", 180),
+        ("Artists/Stahl/B/03.mp3", "Near Three", "Stahl", "Metal", 220),
+        ("Artists/Fels/C/01.mp3", "Rock One", "Fels", "Rock", 190),
+        ("Artists/Fels/C/02.mp3", "Rock Two", "Fels", "Rock", 230),
+        ("Artists/Federleicht/D/01.mp3", "Calm One", "Federleicht", "Chill", 260),
+        ("Artists/Eisenwerk/A/00.mp3", "Intro", "Eisenwerk", "Metal", 8),
+    ]
+    rows = []
+    for rel, title, artist, genre, seconds in details:
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x")
+        rows.append({"rel_path": rel, "title": title, "artist": artist,
+                     "albumartist": artist, "album": rel.split("/")[2],
+                     "genre": genre, "grouping": genre, "duration_s": seconds,
+                     "size_bytes": 1000, "bitrate": 192000, "ext": ".mp3"})
+    rows.append({"rel_path": "Artists/Gone/E/01.mp3", "title": "Missing",
+                 "artist": "Gone", "genre": "Metal", "duration_s": 200,
+                 "ext": ".mp3"})
+    inventory = root / "library-work" / "inventory" / "files.jsonl"
+    inventory.parent.mkdir(parents=True, exist_ok=True)
+    inventory.write_text("".join(json.dumps(row) + "\n" for row in rows),
+                         encoding="utf-8")
+    playlists = root / "Playlists"
+    playlists.mkdir()
+    (playlists / "All.m3u8").write_text(
+        "#EXTM3U\n../../Artists/Eisenwerk/A/01.mp3\n"
+        "../../Artists/Stahl/B/01.mp3\n", encoding="utf-8")
+
+    catalog = Catalog(root)
+    seed = "Artists/Eisenwerk/A/01.mp3"
+    near = ["Artists/Stahl/B/01.mp3", "Artists/Stahl/B/02.mp3",
+            "Artists/Stahl/B/03.mp3", "Artists/Fels/C/01.mp3",
+            "Artists/Fels/C/02.mp3"]
+
+    # -- the state file ---------------------------------------------------
+    check("endless starts off", not endless_mod.active(root))
+    state = endless_mod.start(root, seed)
+    check("starting endless stores the anchor",
+          state["on"] and state["last"] == seed and endless_mod.active(root),
+          str(state))
+    endless_mod.set_last(root, near[0])
+    check("the anchor follows the song that just played",
+          endless_mod.load(root)["last"] == near[0],
+          str(endless_mod.load(root)))
+    endless_mod.mark_repeat(root, True)
+    check("the repeat fallback is recorded",
+          endless_mod.load(root)["repeat"] is True,
+          str(endless_mod.load(root)))
+    endless_mod.remember(root, near)
+    check("picks are remembered",
+          set(near) <= set(endless_mod.load(root)["played"]),
+          str(endless_mod.load(root)["played"]))
+    endless_mod.save(root, {"on": True, "last": seed,
+                            "played": [f"t/{index}" for index in range(200)]})
+    check("the picked history is trimmed",
+          len(endless_mod.load(root)["played"]) == endless_mod.HISTORY,
+          str(len(endless_mod.load(root)["played"])))
+    info = endless_mod.info(root, catalog)
+    check("the info names the anchor track",
+          info["last_label"].startswith("Eisenwerk") and info["batch"] > 0,
+          str(info))
+    check("stopping endless turns it off and clears the repeat",
+          endless_mod.stop(root) and not endless_mod.active(root)
+          and not endless_mod.load(root)["repeat"],
+          str(endless_mod.load(root)))
+    check("a second stop is a no-op", not endless_mod.stop(root))
+
+    # a corrupt state file must read as off, not crash
+    endless_mod.path(root).write_text("{not json", encoding="utf-8")
+    check("a broken state file reads as off",
+          not endless_mod.active(root), str(endless_mod.load(root)))
+
+    # -- the engine: start, drift, top up ---------------------------------
+    engine = Engine(root=root, use_llm=False)
+    plays: list[tuple[str, bool, bool]] = []
+    commands: list[tuple[str, object]] = []
+    asked: list[str] = []
+
+    def fake_play(target, append=False, shuffle=False):
+        plays.append((str(target), bool(append), bool(shuffle)))
+        return True, ""
+
+    def fake_command(action, value=None):
+        commands.append((action, value))
+        return True, ""
+
+    def fake_similar(rel=None, **kwargs):
+        asked.append(str(rel))
+        return [{"rel": entry} for entry in near]
+
+    engine.player.play = fake_play
+    engine.player.command = fake_command
+    engine.player.running = lambda: True
+    engine.player.status = lambda: {"idle": False, "file": str(root / seed),
+                                    "playlist_count": 1, "playlist_pos": 0}
+    engine.player.queue_from = lambda limit=200: []
+    engine.psycho.similar = fake_similar
+    engine.player.current_file = lambda: str(root / seed)
+
+    reply = engine.handle("endless mode")
+    text = clean_text(reply)
+    check("the chat turns endless mode on",
+          "Endless mode on" in text and "Up next" in text, text[:300])
+    check("endless is on after the turn", endless_mod.active(root))
+    check("the anchor is the track that is playing",
+          endless_mod.load(root)["last"] == seed,
+          str(endless_mod.load(root)))
+    check("ending the batch leaves the playing song alone",
+          all(append for _target, append, _shuffle in plays), str(plays))
+    check("the queue is remembered as an endless queue",
+          (engine._queue_target or {}).get("kind") == "temp"
+          and bool((engine._queue_target or {}).get("entries")),
+          str(engine._queue_target))
+    picks = endless_mod.load(root)["played"]
+    check("the picks went into the history",
+          bool(picks) and seed not in picks
+          and "Artists/Gone/E/01.mp3" not in picks, str(picks))
+    check("the profile was asked about the playing song",
+          asked and asked[0] == seed, str(asked))
+    check("no missing file and no interlude was queued",
+          "Artists/Gone/E/01.mp3" not in picks
+          and "Artists/Eisenwerk/A/00.mp3" not in picks, str(picks))
+
+    # the queue is long: a poll changes nothing
+    plays.clear()
+    engine._endless_at = 0.0
+    engine.player.status = lambda: {"idle": False, "file": str(root / seed),
+                                    "playlist_count": 10, "playlist_pos": 1}
+    engine.poll()
+    check("a long queue is not topped up", not plays, str(plays))
+
+    # the next batch follows the song that plays NOW, not the old anchor
+    plays.clear()
+    asked.clear()
+    engine._endless_at = 0.0
+    engine.player.status = lambda: {"idle": False,
+                                    "file": str(root / near[0]),
+                                    "playlist_count": 1, "playlist_pos": 0}
+    engine.poll()
+    check("the top-up follows the song that just played",
+          asked and asked[0] == near[0], str(asked))
+    check("the anchor moved with the song",
+          endless_mod.load(root)["last"] == near[0],
+          str(endless_mod.load(root)))
+    check("the top-up only appends",
+          plays and all(append for _t, append, _s in plays), str(plays))
+    picked_after = len(endless_mod.load(root)["played"])
+    engine.poll()
+    check("the top-up is throttled, not repeated every poll",
+          len(endless_mod.load(root)["played"]) == picked_after,
+          str(len(endless_mod.load(root)["played"])))
+
+    reply = engine.handle("is endless mode on")
+    check("the chat reports the endless status",
+          "Endless mode on" in clean_text(reply)
+          and "picked" in clean_text(reply), clean_text(reply)[:250])
+    plays.clear()
+    engine._endless_at = 0.0
+    reply = engine.handle("more endless")
+    check("the chat can add an endless batch on request",
+          "Added" in clean_text(reply), clean_text(reply)[:250])
+
+    # -- nothing fitting: repeat the queue --------------------------------
+    original_candidates = radio_mod.candidates
+    radio_mod.candidates = lambda *a, **k: []
+    try:
+        commands.clear()
+        endless_mod.mark_repeat(root, False)
+        added = engine._endless_extend(near[0])
+        check("with nothing fitting no track is added", added == [], str(added))
+        check("the queue is set to repeat instead of stopping",
+              ("repeat_all", None) in commands
+              and endless_mod.load(root)["repeat"] is True,
+              f"{commands} {endless_mod.load(root)}")
+    finally:
+        radio_mod.candidates = original_candidates
+    commands.clear()
+    added = engine._endless_extend(near[0])
+    check("a fitting batch is added again", bool(added), str(added))
+    check("the repeat is switched off once something fits",
+          ("repeat_off", None) in commands
+          and endless_mod.load(root)["repeat"] is False,
+          f"{commands} {endless_mod.load(root)}")
+
+    reply = engine.handle("stop endless")
+    check("the chat stops endless mode",
+          "Endless mode off" in clean_text(reply)
+          and not endless_mod.active(root), clean_text(reply)[:250])
+    plays.clear()
+    engine._endless_at = 0.0
+    engine.player.status = lambda: {"idle": False, "file": str(root / seed),
+                                    "playlist_count": 1, "playlist_pos": 0}
+    engine.poll()
+    check("a stopped endless mode adds nothing", not plays, str(plays))
+
+    # -- radio and endless are mutually exclusive -------------------------
+    radio_mod.start(root, seed, "Metal", "Metal")
+    engine.handle("endless mode")
+    check("starting endless stops the radio",
+          endless_mod.active(root) and not radio_mod.active(root),
+          f"{endless_mod.active(root)} {radio_mod.active(root)}")
+    engine.handle("start the radio")
+    check("starting the radio stops endless",
+          radio_mod.active(root) and not endless_mod.active(root),
+          f"{endless_mod.active(root)} {radio_mod.active(root)}")
+    radio_mod.stop(root)
+    endless_mod.stop(root)
+
+    # -- shuffle mode ----------------------------------------------------
+    check("shuffle mode starts off", not engine.shuffle_mode())
+    plays.clear()
+    engine.skill_play({"target": seed}, "test")
+    check("without the mode a play is not shuffled",
+          plays and plays[-1][2] is False, str(plays))
+    engine.set_shuffle_mode(True)
+    check("shuffle mode is stored in the profile",
+          engine.shuffle_mode()
+          and (root / "library-work/app/chat/profile.json").is_file(),
+          str((root / "library-work/app/chat/profile.json")))
+    plays.clear()
+    engine.skill_play({"target": seed}, "test")
+    check("with the mode on a playlist starts shuffled",
+          plays and plays[-1][2] is True, str(plays))
+    engine.set_shuffle_mode(False)
+    plays.clear()
+    engine.skill_play({"target": seed, "shuffle": True}, "test")
+    check("a one-off shuffled play still works with the mode off",
+          plays and plays[-1][2] is True, str(plays))
+
+    commands.clear()
+    reply = engine.skill_transport({"action": "shuffle_on"}, "test")
+    check("shuffle_on stores the preference",
+          engine.shuffle_mode() and ("shuffle_on", None) in commands,
+          f"{commands} {clean_text(reply)[:80]}")
+    reply = engine.skill_transport({"action": "shuffle_off"}, "test")
+    check("shuffle_off clears the preference",
+          not engine.shuffle_mode() and ("shuffle_off", None) in commands,
+          f"{commands} {clean_text(reply)[:80]}")
+
+    # -- the float transport regression ----------------------------------
+    # POST /api/transport sends the value as a float; `{delta:+d}` used to
+    # raise ValueError: Unknown format 'd' for object of type 'float'
+    commands.clear()
+    reply = engine.skill_transport({"action": "seek", "value": 1.5}, "test")
+    check("a float seek is answered", not reply.error
+          and "Jumped" in reply.text
+          and ("seek", 1.5) in commands, f"{reply.text[:120]} {commands}")
+    reply = engine.skill_transport({"action": "seek", "value": "abc"}, "test")
+    check("a non-numeric seek is refused, not raised",
+          reply.error and "not a number" in reply.text, reply.text[:120])
+    reply = engine.skill_transport({"action": "seek_abs", "value": 12.5},
+                                   "test")
+    check("a float absolute seek is answered", not reply.error
+          and "0:12" in reply.text, reply.text[:120])
+    reply = engine.skill_transport({"action": "seek_abs", "value": "later"},
+                                   "test")
+    check("a non-numeric position is refused, not raised",
+          reply.error, reply.text[:120])
+    reply = engine.skill_transport({"action": "speed", "value": 1.25}, "test")
+    check("a fractional speed is answered", not reply.error
+          and "1.25" in reply.text, reply.text[:120])
+    reply = engine.skill_transport({"action": "speed_delta", "value": 0.25},
+                                   "test")
+    check("a fractional speed change is answered", not reply.error,
+          reply.text[:120])
+    reply = engine.skill_transport({"action": "volume", "value": 65.4},
+                                   "test")
+    check("a float volume is rounded in the answer", not reply.error
+          and "65%" in reply.text, reply.text[:120])
+    reply = engine.skill_transport({"action": "volume", "value": "loud"},
+                                   "test")
+    check("a non-numeric volume is refused, not raised",
+          reply.error, reply.text[:120])
+    reply = engine.skill_transport({"action": "volume_delta", "value": -5.5},
+                                   "test")
+    check("a float volume change is answered",
+          not reply.error and "Quieter" in reply.text, reply.text[:120])
+    reply = engine.skill_transport({"action": "position", "value": "1.5"},
+                                   "test")
+    check("a float queue position resolves to an entry",
+          not reply.error and "entry 1" in reply.text, reply.text[:120])
+
+    # -- the wording -----------------------------------------------------
+    for sentence, action in (
+            ("endless mode", "start"),
+            ("endless on", "start"),
+            ("endlosmodus", "start"),
+            ("mach endlos an", "start"),
+            ("keep the music going", "start"),
+            ("never stop the music", "start"),
+            ("stop endless", "stop"),
+            ("endless off", "stop"),
+            ("endlos aus", "stop"),
+            ("is endless mode on", "status"),
+            ("more endless", "more"),
+            ("endless add more", "more")):
+        planned = nlu_plan(sentence, engine.ctx, engine.catalog)
+        check(f"“{sentence}” is endless {action}",
+              planned is not None and planned.skill == "endless"
+              and planned.args.get("action") == action,
+              str(planned)[:200])
+    for sentence in ("play Endless Love", "play some rock",
+                     "start the radio", "play the endless song"):
+        planned = nlu_plan(sentence, engine.ctx, engine.catalog)
+        check(f"“{sentence}” does not start endless mode",
+              planned is None or planned.skill != "endless",
+              str(planned)[:200])
+    for sentence, action in (("shuffle mode on", "shuffle_on"),
+                             ("shuffle mode off", "shuffle_off"),
+                             ("always shuffle playlists", "shuffle_on")):
+        planned = nlu_plan(sentence, engine.ctx, engine.catalog)
+        check(f"“{sentence}” is {action}",
+              planned is not None and planned.skill == "transport"
+              and planned.args.get("action") == action,
+              str(planned)[:200])
+
+    # -- a dry run stores nothing ----------------------------------------
+    dry = Engine(root=root, use_llm=False, dry_run=True)
+    try:
+        dry.player.play = lambda *a, **k: (False, "dry run")
+        dry.player.status = lambda: {"idle": True}
+        dry.player.queue_from = lambda limit=200: []
+        dry.player.current_file = lambda: str(root / seed)
+        dry.psycho.similar = lambda rel=None, **k: []
+        reply = dry.handle("endless mode")
+        check("a dry run says so",
+              "dry run" in clean_text(reply).casefold(),
+              clean_text(reply)[:250])
+        check("a dry run stores no endless state",
+              not endless_mod.active(root), str(endless_mod.load(root)))
+    finally:
+        dry.close()
+
+    # -- the window's service --------------------------------------------
+    service = ChatService(root=root, use_llm=False, dry_run=True,
+                          auto_psycho=False)
+    try:
+        service.engine.player.command = fake_command
+        payload = service.endless_state()
+        check("the window can read the endless state",
+              "on" in payload and "last" in payload, str(payload))
+        answer = service.endless_action("start")
+        check("the window can turn endless on",
+              answer.get("ok") and "Endless mode on" in answer.get("note", ""),
+              str(answer)[:250])
+        answer = service.endless_action("nonsense")
+        check("an unknown endless action is refused",
+              bool(answer.get("error")), str(answer))
+        answer = service.shuffle_action(True)
+        check("the window can arm shuffle", answer.get("ok"), str(answer))
+        commands.clear()
+        result = service.transport("seek", 1.5)
+        check("the window transport accepts a float seek",
+              result.get("ok") and "Jumped" in result.get("text", ""),
+              str(result)[:250])
+        check("the window never wrote a playlist",
+              not (root / "Playlists" / "Own").exists(),
+              "Playlists/Own exists")
+    finally:
+        service.engine.close()
+    engine.close()
+
+
 def check_library_data(work: Path) -> None:
     """The plain-text backup and an import matched by audio fingerprint.
 
@@ -5918,6 +6298,7 @@ def main() -> int:
         check_smart(work)
         check_stats(work)
         check_radio(work)
+        check_endless(work)
         check_explain(work)
         check_pwa(work)
         check_journey(work)

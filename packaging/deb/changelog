@@ -1,3 +1,14 @@
+jmp-ai-music-player (1.1.0-1) unstable; urgency=medium
+
+  * Endless mode: the queue grows from the track that just played and
+    repeats itself when nothing fitting is left.
+  * Shuffle mode: arm random order for every playlist that starts.
+  * Fixes a transport crash on fractional values ("Unknown format 'd'
+    for object of type 'float'" on a seek), hardens volume, position and
+    speed parsing, and fixes the optional download module search path.
+
+ -- Julian M. Kunkel <julian.kunkel@gwdg.de>  Sun, 22 Nov 2026 15:00:00 +0100
+
 jmp-ai-music-player (1.0.0-1) unstable; urgency=medium
 
   * Initial Debian/Ubuntu package.

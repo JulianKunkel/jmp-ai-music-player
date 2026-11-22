@@ -145,9 +145,9 @@ forms are shown where they differ in structure.
 
 | you want | say |
 |---|---|
-| **Play / transport** | "play Bands", "play die ärzte", "play the whole library shuffled", "play something chill", "pause", "next", "volume 40", "jump to 2:30", "continue where I left off" |
+| **Play / transport** | "play Bands", "play die ärzte", "play the whole library shuffled", "play something chill", "pause", "next", "volume 40", "jump to 2:30", "continue where I left off", "endless mode", "shuffle mode on" |
 | **Playlists and queues** | "create a smooth playlist for work", "a two-hour party playlist", "one hour of metal", "zwei Stunden Entspannung", "a playlist with 30 tracks of rock", "add some jazz to my evening", "save that as Late Night", "remove 2 from Mix", "make a smart playlist of 90s metal", "make a smart playlist of tracks longer than 8 minutes, shuffled" |
-| **Sound, mood and rank** | "find the slowest and boring song", "the 10 most aggressive tracks", "why is this the most aggressive?", "find music similar to this but faster", "find something 20 % faster", "show the timbre profile", "find the most bass-heavy song", "show the psycho families", "is the radio on?", "start a radio from this song", "more radio" |
+| **Sound, mood and rank** | "find the slowest and boring song", "the 10 most aggressive tracks", "why is this the most aggressive?", "find music similar to this but faster", "find something 20 % faster", "show the timbre profile", "find the most bass-heavy song", "show the psycho families", "is the radio on?", "start a radio from this song", "more radio", "keep the music going", "never stop the music" |
 | **Lyrics** | "show the lyrics", "songs about the sea", "which song mentions pizza", "how many songs mention pizza", "export the lyrics as lrc", "shift the lyrics half a second later", "the lyrics are too early", "how many songs have lyrics" |
 | **Your library as data** | "how many tracks do I have", "which genres do I have most of", "what formats do I have", "the longest track", "what did I add this month", "what's new", "how complete is the library", "is the library healthy", "show duplicate 3", "library statistics" |
 | **Import** *(optional module)* | "search the import source for <words>", "download 2", "download all", "retry the download", "clear the failed download", "add <url> to my library" — these need a build with a download module; without one the chat says so |
@@ -280,8 +280,8 @@ The release page carries a package built for Ubuntu 24.04 and 26.04
 <https://github.com/JulianKunkel/jmp-ai-music-player/releases>
 
 ```bash
-wget https://github.com/JulianKunkel/jmp-ai-music-player/releases/latest/download/jmp-ai-music-player_1.0.0-1_all.deb
-sudo apt install ./jmp-ai-music-player_1.0.0-1_all.deb
+wget https://github.com/JulianKunkel/jmp-ai-music-player/releases/latest/download/jmp-ai-music-player_1.1.0-1_all.deb
+sudo apt install ./jmp-ai-music-player_1.1.0-1_all.deb
 ```
 
 It installs the app under `/usr/lib/jmp`, the launcher `/usr/bin/music-cli`,

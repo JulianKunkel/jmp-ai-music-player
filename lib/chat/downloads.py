@@ -67,7 +67,8 @@ def provider():
     if _loaded:
         return _provider
     _loaded = True
-    for path in _search_paths():
+    for path in reversed(_search_paths()):
+        # the first configured path must win, so insert at 0 from the end
         if path and Path(path).is_dir() and path not in sys.path:
             sys.path.insert(0, path)
             _added_paths.append(path)
