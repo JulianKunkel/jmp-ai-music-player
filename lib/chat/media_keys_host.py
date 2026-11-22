@@ -33,6 +33,22 @@ FIRST_SLOT = 90
 SLOT_COUNT = 40
 
 
+def _binding(key: str) -> str:
+    """The GTK accelerator for an unmodified key.
+
+    The angle brackets in an accelerator string introduce a *modifier*
+    (``<Control>``), so ``<F5>`` is not a valid accelerator and GNOME ignores
+    it.  A bare ``F5`` is the key name and works globally.
+    """
+    return str(key).strip()
+
+
+def _binding_forms(key: str) -> set[str]:
+    """The valid spelling and the old, broken ``<F5>`` spelling."""
+    key = _binding(key)
+    return {key, f"<{key}>"}
+
+
 def _run(args: list[str]) -> tuple[int, str, str]:
     try:
         done = subprocess.run(args, capture_output=True, text=True, timeout=10)
@@ -134,17 +150,23 @@ def status(bindings=None, cli: str = "") -> dict:
     entries = {path: read_entry(path) for path in listed}
     rows = []
     for key, action in pairs:
-        binding = f"<{key}>"
+        binding = _binding(key)
         owner = ""
+        old_owner = ""
+        works = False
         for path, entry in entries.items():
-            if str(entry.get("binding") or "") == binding and _ours(entry):
-                owner = path
-                break
+            value = str(entry.get("binding") or "")
+            if value in _binding_forms(key) and _ours(entry):
+                if value == binding:
+                    owner, works = path, True
+                    break
+                old_owner = old_owner or path
+        owner = owner or old_owner
         rows.append({
             "key": key,
             "action": action,
             "binding": binding,
-            "installed": bool(owner),
+            "installed": works,
             "path": owner,
             "command": str(entries.get(owner, {}).get("command") or
                            (f"{cli} {action}" if cli else f"music-cli {action}")),
@@ -207,23 +229,25 @@ def install(bindings=None, cli: str = "") -> dict:
     entries = {path: read_entry(path) for path in listed}
     result: list[str] = list(listed)
     spare = _free_slots(listed, pairs)
+    chosen: set[str] = set()
     for index, (key, action) in enumerate(pairs):
         owner = ""
         for path, entry in entries.items():
-            if (str(entry.get("binding") or "") == f"<{key}>"
+            if (str(entry.get("binding") or "") in _binding_forms(key)
                     and _ours(entry)):
                 owner = path
                 break
         path = owner or spare[index]
         if not path:
             continue
+        chosen.add(path)
         if path not in result:
             result.append(path)
-        _set(path, f"{PREFIX}{action}", f"<{key}>", f"{cli} {action}")
-    # drop our own entries that no longer belong (a changed key set)
-    wanted_bindings = {f"<{key}>" for key, _action in pairs}
+        _set(path, f"{PREFIX}{action}", _binding(key), f"{cli} {action}")
+    # Drop our own entries that no longer belong: a changed key set, or an
+    # old entry that duplicated a repaired one.
     for path, entry in entries.items():
-        if _ours(entry) and str(entry.get("binding") or "") not in wanted_bindings:
+        if _ours(entry) and path not in chosen:
             result = [item for item in result if item != path]
             _reset(path)
     _write_list(result)

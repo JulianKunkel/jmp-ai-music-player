@@ -2923,12 +2923,15 @@ def check_window() -> None:
         "    data.get('entries', {}).get(path, {}).pop(argv[2], None)\n"
         "    save()\n")
     fake.chmod(0o755)
-    _json.dump({"list": ["/org/gnome/settings-daemon/plugins/media-keys/"
-                         "custom-keybindings/custom0/"],
-                "entries": {"/org/gnome/settings-daemon/plugins/media-keys/"
-                            "custom-keybindings/custom0/":
+    key_root = ("/org/gnome/settings-daemon/plugins/media-keys/"
+                "custom-keybindings/")
+    legacy = key_root + "custom90/"
+    _json.dump({"list": [key_root + "custom0/", legacy],
+                "entries": {key_root + "custom0/":
                             {"name": "diodon", "binding": "<Super>v",
-                             "command": "/usr/bin/diodon"}}},
+                             "command": "/usr/bin/diodon"},
+                            legacy: {"name": "JMP stop", "binding": "<F5>",
+                                     "command": "/home/x/music-cli stop"}}},
                state_file.open("w", encoding="utf-8"))
 
     saved_env = {key: os.environ.get(key) for key in
@@ -2946,6 +2949,9 @@ def check_window() -> None:
         check("an existing desktop binding is left alone in the report",
               any("custom0" in path for path in state["others"])
               and not state["conflicts"], str(state["others"]))
+        check("a legacy <F5> entry is shown as not working, ready to repair",
+              state["rows"][0]["installed"] is False
+              and state["rows"][0]["path"] == legacy, str(state["rows"][0]))
 
         state = host.install(cli="/home/x/music-cli")
         check("installing adds the four keys", state["ok"] is True
@@ -2959,8 +2965,13 @@ def check_window() -> None:
               str([row["command"] for row in state["rows"]]))
         check("each key is bound to its printed function key",
               [row["binding"] for row in state["rows"]] ==
-              ["<F5>", "<F6>", "<F7>", "<F8>"],
+              ["F5", "F6", "F7", "F8"],
               str([row["binding"] for row in state["rows"]]))
+        check("a legacy <F5> binding is repaired instead of duplicated",
+              state["rows"][0]["binding"] == "F5"
+              and state["rows"][0]["path"] == legacy
+              and len(state["entries"]) == 5,
+              str(state["rows"][0]))
 
         again = host.install(cli="/home/x/music-cli")
         check("installing twice does not duplicate the entries",

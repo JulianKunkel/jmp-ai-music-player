@@ -119,7 +119,9 @@ install() {
         base="${base%/}"
         base="${base//\//.}"
         gsettings set "$SCHEMA.custom-keybinding:$path" name "JMP ${act}"
-        gsettings set "$SCHEMA.custom-keybinding:$path" binding "<${key}>"
+        # A bare F5 is the GTK key name.  <F5> would mean a modifier called
+        # F5, which GNOME does not know, so the shortcut would be ignored.
+        gsettings set "$SCHEMA.custom-keybinding:$path" binding "${key}"
         gsettings set "$SCHEMA.custom-keybinding:$path" command "$CLI $act"
         printf '  %-6s -> music-cli %-6s  (%s)\n' "$key" "$act" "$path"
         index=$((index + 1))

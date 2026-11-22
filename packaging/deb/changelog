@@ -1,3 +1,19 @@
+jmp-ai-music-player (1.2.1-1) unstable; urgency=medium
+
+  * Fix the GNOME global media-key bindings.  They were written as "<F5>"
+    instead of the GTK key name "F5".  In an accelerator string the angle
+    brackets introduce a modifier, so GNOME ignored the shortcut and the keys
+    still worked only while the JMP window had focus.
+  * The bindings now use bare F5-F8.  An existing installation is repaired by
+    the next "Install global shortcuts" click (or jmp-media-keys --install):
+    old entries are recognised by name and rewritten in place, not duplicated.
+  * Old entries are reported as "window only" until repaired, so the Install
+    button appears again instead of claiming a broken binding works.
+  * No music file, tag or playlist is touched; a key press still runs exactly
+    one transport command.
+
+ -- Julian M. Kunkel <julian.kunkel@gwdg.de>  Sun, 22 Nov 2026 22:00:00 +0100
+
 jmp-ai-music-player (1.2.0-1) unstable; urgency=medium
 
   * The global media keys are now a setting instead of a terminal job.
