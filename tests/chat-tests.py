@@ -2752,28 +2752,60 @@ def check_window() -> None:
     # -- a media row that sends F5–F8 --------------------------------------
     # A keyboard whose media row is in "function key" mode sends plain F5–F8
     # instead of XF86Audio*, which is why the keys did nothing at all before.
-    check("the unmodified function keys are the media keys of such a row",
-          window_module.FKEY_MEDIA.get("F5") == "toggle"
-          and window_module.FKEY_MEDIA.get("F6") == "stop"
-          and window_module.FKEY_MEDIA.get("F7") == "prev"
+    # The order is per keyboard: this machine's row prints stop, rewind,
+    # play/pause, forward on F5–F8, so a toggle-first guess put play/pause on
+    # F7 (restarting the track) and rewind on F6 (stopping the music).
+    check("the unmodified function keys follow the row on this keyboard",
+          window_module.FKEY_MEDIA.get("F5") == "stop"
+          and window_module.FKEY_MEDIA.get("F6") == "prev"
+          and window_module.FKEY_MEDIA.get("F7") == "toggle"
           and window_module.FKEY_MEDIA.get("F8") == "next",
           str(window_module.FKEY_MEDIA))
 
     calls = []
     media = window_module._Media("http://127.0.0.1:1/?t=x")
     media.act = lambda action, value=None: calls.append(action)
-    check("an unmodified F5 toggles playback", media.key("F5", True) is True
+    check("an unmodified F7 toggles playback", media.key("F7", True) == "toggle"
           and calls == ["toggle"], str(calls))
     calls.clear()
-    check("a modified F5 stays a shortcut", media.key("F5", False) is False
+    check("an unmodified F6 rewinds", media.key("F6", True) == "prev"
+          and calls == ["prev"], str(calls))
+    calls.clear()
+    check("a modified F7 stays a shortcut", media.key("F7", False) == ""
           and calls == [], str(calls))
     check("a real media key works with or without a modifier",
-          media.key("XF86AudioNext", False) is True and calls == ["next"]
-          and media.key("XF86AudioStop", True) is True
+          media.key("XF86AudioNext", False) == "next" and calls == ["next"]
+          and media.key("XF86AudioStop", True) == "stop"
           and calls == ["next", "stop"], str(calls))
     check("an ordinary key is not a media key",
-          media.key("a", True) is False and media.key("F9", True) is False,
+          media.key("a", True) == "" and media.key("F9", True) == "",
           str(calls))
+    check("a key that means no action is reported back as empty",
+          media.key("F4", True) == "", str(calls))
+
+    # -- a wrong guess never needs a rebuild -------------------------------
+    saved = dict(window_module.FKEY_MEDIA)
+    try:
+        window_module.apply_media_overrides({"F5": "toggle", "F6": "next",
+                                             "nonsense": "toggle"})
+        check("a user mapping overrides the built-in one",
+              window_module.FKEY_MEDIA.get("F5") == "toggle"
+              and window_module.FKEY_MEDIA.get("F6") == "next",
+              str(window_module.FKEY_MEDIA))
+        check("an override with an unknown action is ignored",
+              "nonsense" not in window_module.FKEY_MEDIA,
+              str(window_module.FKEY_MEDIA))
+        check("an override with an impossible action is ignored",
+              window_module.apply_media_overrides(
+                  {"F8": "explode"}).get("F8") == "next",
+              str(window_module.FKEY_MEDIA))
+    finally:
+        window_module.FKEY_MEDIA.clear()
+        window_module.FKEY_MEDIA.update(saved)
+    check("the override file lives in the user's config, not the library",
+          window_module.MEDIA_MAP_FILE.endswith(
+              os.path.join("julians-music-app", "media-keys.json")),
+          window_module.MEDIA_MAP_FILE)
 
     # -- the key log --------------------------------------------------------
     import tempfile
@@ -2783,12 +2815,25 @@ def check_window() -> None:
         window_module.KEYLOG_PATH = ""
         window_module.KEYLOG_FILE = str(log)
         window_module._keylog("gtk3", "a", 1)          # typing: never written
-        window_module._keylog("gtk3", "F5", 1)         # a media key: written
+        window_module._keylog("gtk3", "F5", 1, 2, 3, "stop")
         window_module._keylog("page", "MediaPlayPause", "{}")
+        window_module._keylog("sent", "toggle", "Paused.", always=True)
         written = log.read_text(encoding="utf-8")
         check("the key log keeps media keys and never ordinary typing",
               "F5" in written and "MediaPlayPause" in written
               and "\ta\t" not in written, written)
+        check("the key log names the action a press became",
+              "\tstop" in written or written.rstrip().endswith("stop"),
+              written)
+        check("the key log timestamps every line",
+              written.split("\t")[0].count("T") == 1
+              and len(written.split("\t")[0]) == 19, written.split("\n")[0])
+        check("the key log records the player's answer too",
+              "Paused." in written, written)
+        check("every function key is logged, mapped or not",
+              window_module._media_name("F4")
+              and not window_module._media_name("a"),
+              "an unmapped F-key would vanish from the log")
         check("the key log lives outside the library",
               "media-keys.log" in window_module.KEYLOG_FILE or
               window_module.KEYLOG_FILE.endswith("keys.log"),

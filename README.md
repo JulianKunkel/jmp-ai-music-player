@@ -474,15 +474,24 @@ is no new Python dependency.
   and a track has a second button that opens its sound profile.
 - **Media keys** work like the transport buttons: play/pause, next, previous
   and stop.  A keyboard whose media row sits behind F5–F8 works as long as the
-  row is in function mode: an unmodified `F5`/`F6`/`F7`/`F8` means
-  play/pause, stop, previous, next (and `Ctrl+F5` stays a shortcut).  The
+  row is in function mode, and the four keys mean what they are printed to
+  mean (on this machine's row: `F5` stop, `F6` rewind, `F7` play/pause, `F8`
+  forward — a different keyboard is corrected with
+  `~/.config/julians-music-app/media-keys.json`, no rebuild; `Ctrl+F5` stays a
+  shortcut).  Those plain function keys reach only the focused window; to have
+  them work in every application, switch the row to multimedia mode, where
+  the keys are real `XF86Audio*` and the desktop routes them through MPRIS.
+  The
   native GTK window publishes an **MPRIS** player
   (`org.mpris.MediaPlayer2.jmp`), so the desktop's own media keys reach the
   player even while the window is in the background; a small host agent keeps
   that MPRIS player alive after the window is closed, so the keys still work
   while the music runs in the container.  In a browser window or on a phone
   the page handles them while it has focus.  Every key becomes the same
-  `POST /api/transport` call as the matching button; no file is touched.  If a
+  `POST /api/transport` call as the matching button; no file is touched.  A key
+  that meets a stopped player starts what was playing last (play, back,
+  forward), and back restarts the current track when it is already under way,
+  so no key ever leaves the room silent.  If a
   key does nothing, `~/.cache/julians-music-app/media-keys.log` records every
   media/function key the window and the page saw (never ordinary typing).
 - **Profile** opens the sound net diagram of the current song: the twelve

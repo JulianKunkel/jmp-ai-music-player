@@ -25,6 +25,7 @@ import json
 import os
 import sys
 import threading
+import time
 from urllib.parse import parse_qs, quote, urlparse
 from urllib.request import Request, urlopen
 
@@ -112,16 +113,63 @@ MEDIA_KEYS = {
 #: the media symbols but arrive as plain F5–F8 (or F13–F16).  They are mapped
 #: to the same actions only while no modifier is held, so Ctrl+F5 and friends
 #: stay what they were.
+#:
+#: The order is per keyboard, not universal.  It was read off the `dakai
+#: PS/2+USB Keyboard` on this machine (2026-11-22), whose row prints stop,
+#: rewind, play/pause and forward on F5, F6, F7, F8 — the earlier toggle,
+#: stop, prev, next guess put play/pause on F7 (restarting the track) and
+#: rewind on F6 (stopping the music), which is exactly what was reported.
 FKEY_MEDIA = {
-    "F5": "toggle",
-    "F6": "stop",
-    "F7": "prev",
+    "F5": "stop",
+    "F6": "prev",
+    "F7": "toggle",
     "F8": "next",
-    "F13": "toggle",
-    "F14": "stop",
-    "F15": "prev",
+    "F13": "stop",
+    "F14": "prev",
+    "F15": "toggle",
     "F16": "next",
 }
+
+#: the actions a key may be bound to; anything else in an override is ignored
+MEDIA_ACTIONS = frozenset({"toggle", "pause", "resume", "stop", "next", "prev"})
+
+#: an override, so a wrongly guessed row never needs a rebuild:
+#:   {"F5": "stop", "F6": "prev", "F7": "toggle", "F8": "next"}
+#: at this path (or JMP_MEDIA_KEYS="F5=stop,F6=prev,…").
+MEDIA_MAP_FILE = os.path.join(
+    os.environ.get("XDG_CONFIG_HOME") or
+    os.path.join(os.path.expanduser("~"), ".config"),
+    APP_ID, "media-keys.json")
+
+
+def apply_media_overrides(mapping: dict[str, str] | None = None) -> dict[str, str]:
+    """Merge a user mapping over the built-in one; bad entries are ignored."""
+    wanted = dict(mapping or {})
+    env = os.environ.get("JMP_MEDIA_KEYS", "")
+    for part in env.replace(";", ",").split(","):
+        name, _, action = part.partition("=")
+        if name.strip() and action.strip():
+            wanted[name.strip()] = action.strip()
+    if not wanted and os.path.isfile(MEDIA_MAP_FILE):
+        try:
+            with open(MEDIA_MAP_FILE, encoding="utf-8") as fh:
+                loaded = json.load(fh)
+            if isinstance(loaded, dict):
+                wanted.update({str(k): str(v) for k, v in loaded.items()})
+        except Exception:
+            pass
+    for name, action in wanted.items():
+        action = str(action).strip().casefold()
+        if action not in MEDIA_ACTIONS:
+            continue
+        if name.startswith(("XF86", "Media", "Audio")):
+            MEDIA_KEYS[name] = action
+        elif name.startswith("F") and name[1:].isdigit():
+            FKEY_MEDIA[name] = action
+    return dict(FKEY_MEDIA)
+
+
+apply_media_overrides()
 
 #: set JMP_KEYLOG=/path/to/file to append every key the window and the page
 #: receive, which is how an unlabelled media row is identified.  Without it only
@@ -140,13 +188,20 @@ def _media_name(name: str) -> bool:
     """True for a key a media row can send (never an ordinary character key)."""
     if not name:
         return False
+    if name.startswith("F") and name[1:].isdigit():
+        return True                 # F1–F24: only a media row maps to an action
     return (name in MEDIA_KEYS or name in FKEY_MEDIA or
             name.startswith(("XF86", "Media", "Audio")))
 
 
-def _keylog(tag, name, *rest) -> None:
-    """Append one line: who saw it, the key name, then the raw details."""
-    if not KEYLOG_PATH and not _media_name(str(name)):
+def _keylog(tag, name, *rest, always: bool = False) -> None:
+    """Append one line: when, who saw it, the key, then the raw details.
+
+    The timestamp matters: it is how a press is matched to the action and to
+    the player's answer after the fact, without asking the listener to repeat
+    the order in words.
+    """
+    if not always and not KEYLOG_PATH and not _media_name(str(name)):
         return
     path = KEYLOG_PATH or KEYLOG_FILE
     try:
@@ -159,8 +214,10 @@ def _keylog(tag, name, *rest) -> None:
                     fh.write(kept)
         except OSError:
             pass
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
         with open(path, "a", encoding="utf-8") as fh:
-            fh.write("\t".join(str(p) for p in (tag, name) + rest) + "\n")
+            fh.write(stamp + "\t" +
+                     "\t".join(str(p) for p in (tag, name) + rest) + "\n")
     except Exception:
         pass
 
@@ -311,25 +368,29 @@ class _Media:
     def act(self, action: str, value=None) -> None:
         def _send() -> None:
             try:
-                self.server.transport(action, value)
+                answer = self.server.transport(action, value) or {}
             except Exception:
-                pass                # a closing server is not a crash
+                _keylog("sent", action, "(no answer)", always=True)
+                return          # a closing server is not a crash
+            text = str(answer.get("text") or answer.get("error") or "")
+            _keylog("sent", action, text[:120], always=True)
         threading.Thread(target=_send, daemon=True).start()
 
-    def key(self, name: str | None, plain: bool = True) -> bool:
-        """Run the transport action a keysym means, if it means one.
+    def key(self, name: str | None, plain: bool = True) -> str:
+        """Run the transport action a keysym means; ``""`` if it means none.
 
         ``plain`` is false when a modifier is held: an unmodified F5 may be the
         media key of a keyboard whose row is in function mode, but Ctrl+F5 is a
-        shortcut and must keep working as one.
+        shortcut and must keep working as one.  The action is returned so the
+        key log can say which one a press really became.
         """
         action = MEDIA_KEYS.get(name or "")
         if action is None and plain:
             action = FKEY_MEDIA.get(name or "")
         if not action:
-            return False
+            return ""
         self.act(action)
-        return True
+        return action
 
     # -- MPRIS -------------------------------------------------------------
 
@@ -525,10 +586,10 @@ def _gtk3(url: str) -> None:
     def _key(_widget, event) -> bool:
         name = Gdk.keyval_name(event.keyval)
         plain = not (event.state & _modifier_mask(Gdk))
-        handled = media.key(name, plain)
+        action = media.key(name, plain)
         _keylog("gtk3", name, event.keyval, event.hardware_keycode,
-                int(event.state), "handled" if handled else "-")
-        return handled
+                int(event.state), action or "-")
+        return bool(action)
 
     window.connect("key-press-event", _key)
 
@@ -572,10 +633,9 @@ def _gtk4(url: str) -> None:
     def _key(_controller, keyval, keycode, state) -> bool:
         name = Gdk.keyval_name(keyval)
         plain = not (state & _modifier_mask(Gdk))
-        handled = media.key(name, plain)
-        _keylog("gtk4", name, keyval, keycode, int(state),
-                "handled" if handled else "-")
-        return handled
+        action = media.key(name, plain)
+        _keylog("gtk4", name, keyval, keycode, int(state), action or "-")
+        return bool(action)
 
     controller.connect("key-pressed", _key)
     window.add_controller(controller)

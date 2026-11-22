@@ -1,3 +1,23 @@
+jmp-ai-music-player (1.1.7-1) unstable; urgency=medium
+
+  * The media row of this keyboard is stop, rewind, play/pause, forward on
+    F5-F8 -- not the toggle/stop/prev/next order assumed so far.  That is why
+    play/pause restarted the track (it was mapped to "previous", which seeks to
+    0:00) and rewind stopped the music (it was mapped to "stop").
+  * The mapping therefore follows the printed row; the same wrong guess is now
+    correctable without a rebuild through
+    ~/.config/julians-music-app/media-keys.json or JMP_MEDIA_KEYS.
+  * The key log is timestamped and also records the action a press became and
+    the player's own answer, so a key that does not do what it should is
+    visible in ~/.cache/julians-music-app/media-keys.log without repeating it
+    from memory.
+  * Plain F5-F8 reach only the focused window (Wayland has no global key
+    observation); for the keys to work in every application the keyboard row
+    has to send real XF86Audio* keys, which the desktop already routes to the
+    player through MPRIS.  The README explains both routes.
+
+ -- Julian M. Kunkel <julian.kunkel@gwdg.de>  Sun, 22 Nov 2026 18:25:00 +0100
+
 jmp-ai-music-player (1.1.6-1) unstable; urgency=medium
 
   * A media key is never a silent no-op any more.  Play/pause, back and
