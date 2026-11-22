@@ -493,7 +493,12 @@ is no new Python dependency.
   forward), and back restarts the current track when it is already under way,
   so no key ever leaves the room silent.  If a
   key does nothing, `~/.cache/julians-music-app/media-keys.log` records every
-  media/function key the window and the page saw (never ordinary typing).
+  media/function key the window and the page saw (never ordinary typing).  A
+  function-key row is focus-only by design (Wayland has no global key
+  observation); `jmp-media-keys --install` registers the same four keys as
+  GNOME global shortcuts calling `music-cli`, so they work in every
+  application — at the cost of taking `F5`–`F8` from other applications
+  (`jmp-media-keys --remove` gives them back).
 - **Profile** opens the sound net diagram of the current song: the twelve
   measured axes as a radar polygon, a slider per axis, the grouped
   measurements (rhythm, loudness, timbre, tonality, bands and space) in a

@@ -1,3 +1,18 @@
+jmp-ai-music-player (1.1.10-1) unstable; urgency=medium
+
+  * The media row of this keyboard sends plain F5-F8, which Wayland delivers
+    only to the focused window, so the keys worked only while JMP had focus.
+    A new helper, jmp-media-keys, registers the same four keys as GNOME global
+    shortcuts that call music-cli, which makes them work in every application
+    (F5 stop, F6 previous, F7 play/pause, F8 next).
+  * The bindings are exclusive on purpose: while they exist, F5-F8 no longer
+    reach other applications.  jmp-media-keys --remove restores the previous
+    state exactly, and --status shows what is registered.
+  * No music file, tag or playlist is touched: a key press runs one transport
+    command.
+
+ -- Julian M. Kunkel <julian.kunkel@gwdg.de>  Sun, 22 Nov 2026 19:40:00 +0100
+
 jmp-ai-music-player (1.1.9-1) unstable; urgency=medium
 
   * 1.1.8 stopped "Continue" from jumping past the end of a shorter queue;
