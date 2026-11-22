@@ -79,12 +79,31 @@ def _number(text: str) -> int:
 # the database tells us whether there is anything to do
 
 
+#: the last counts() answer, keyed by the database stamp.  Three aggregate
+#: queries over 13k rows cost ~15 ms and the footer asks every few seconds.
+_COUNTS: dict[tuple, dict] = {}
+
+
+def _stamp(path: Path) -> tuple:
+    try:
+        info = path.stat()
+    except OSError:
+        return (str(path), 0, 0)
+    return (str(path), info.st_size, info.st_mtime_ns)
+
+
 def counts(root: Path) -> dict:
     """Rows in the profile database, read-only and tolerant of a missing DB."""
     result = {"total": 0, "measured": 0, "detailed": 0, "profiles": 0,
               "families": 0, "failed": 0, "measured_at": "", "exists": False}
     path = db_path(root)
+    stamp = (_stamp(path), _stamp(Path(str(path) + "-wal")))
+    cached = _COUNTS.get(stamp)
+    if cached is not None:
+        return dict(cached)
     if not path.is_file():
+        _COUNTS.clear()
+        _COUNTS[stamp] = dict(result)
         return result
     try:
         import sqlite3
@@ -111,6 +130,8 @@ def counts(root: Path) -> dict:
             conn.close()
     except Exception:                   # a locked or older DB is not an error
         pass
+    _COUNTS.clear()
+    _COUNTS[stamp] = dict(result)
     return result
 
 

@@ -169,6 +169,8 @@ class Catalog:
         self._by_rel: dict[str, dict] = {}
         self._features: dict[str, dict] | None = None
         self._playlists: list[Playlist] | None = None
+        #: entry count per playlist file, keyed by its (size, mtime)
+        self._entry_counts: dict[str, tuple[tuple[int, int], int]] = {}
         self._stamp: tuple[float, float] = (0.0, 0.0)
 
     # -- loading -----------------------------------------------------------
@@ -185,6 +187,7 @@ class Catalog:
         self._rows = None
         self._features = None
         self._playlists = None
+        self._entry_counts.clear()
         self._load_rows()
 
     def _load_rows(self) -> list[dict]:
@@ -412,7 +415,7 @@ class Catalog:
                 if kind == "mood" and path.name.startswith("Mood_Focus_"):
                     real_kind = "focus"
                 found.append(Playlist(path.stem, path, real_kind,
-                                      self._count_entries(path)))
+                                      self._cached_count(path)))
         found.sort(key=lambda p: (p.kind, fold(p.name)))
         self._playlists = found
         return found
@@ -424,6 +427,25 @@ class Catalog:
                        .splitlines() if line.strip() and not line.startswith("#"))
         except OSError:
             return 0
+
+    def _cached_count(self, path: Path) -> int:
+        """`_count_entries`, remembered until the file itself changes.
+
+        The window asks for the playlist list on every state refresh; reading
+        93 files (47k entries) again costs more than the rest of the answer.
+        """
+        try:
+            info = path.stat()
+            stamp = (info.st_size, info.st_mtime_ns)
+        except OSError:
+            return 0
+        key = str(path)
+        cached = self._entry_counts.get(key)
+        if cached is not None and cached[0] == stamp:
+            return cached[1]
+        count = self._count_entries(path)
+        self._entry_counts[key] = (stamp, count)
+        return count
 
     def find_playlist(self, text: str) -> Playlist | None:
         handle = text.strip()

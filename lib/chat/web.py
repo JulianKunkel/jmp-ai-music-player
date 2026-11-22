@@ -447,6 +447,8 @@ class ChatService:
         self.last_request = time.time()
         self.diagnostics = Diagnostics(self.root)
         self._last_status: dict = {}
+        #: the greeting text and its HTML, keyed by the counts it quotes
+        self._welcome: tuple[tuple, str, str] | None = None
         self.dry_run = bool(dry_run)
         self.use_llm = bool(use_llm)
         # the folder this process was started on: it is the one whose
@@ -499,6 +501,15 @@ class ChatService:
             engine = self.engine
             stats = engine.catalog.stats()
             skills = load_skills()
+            # the greeting is built from the stats, so compute it once and reuse
+            # the same string for the markdown; the page asks for the state on
+            # every refresh and a second build was a second of the same work
+            welcome_key = (stats.get("files"), round(float(stats.get("hours") or 0)),
+                           stats.get("artists"))
+            if self._welcome is None or self._welcome[0] != welcome_key:
+                text = engine.welcome()
+                self._welcome = (welcome_key, text, md_to_html(text))
+            welcome, welcome_html = self._welcome[1], self._welcome[2]
             profile = engine.profile.data
             families = engine.psycho.families() if engine.psycho.available() else []
             psycho_ready = bool(families)
@@ -533,8 +544,8 @@ class ChatService:
                 "lyrics": self._lyrics_summary(),
                 # what "Continue" would start (and whether it can)
                 "resume": engine.resume_info(),
-                "welcome": engine.welcome(),
-                "welcome_html": md_to_html(engine.welcome()),
+                "welcome": welcome,
+                "welcome_html": welcome_html,
                 "suggestions": examples(),
                 "help": help_markdown(),
                 "profile": {
@@ -1779,10 +1790,25 @@ class ChatService:
                 args["value"] = float(text)
             except (TypeError, ValueError):
                 args["value"] = text        # "on"/"off"/"one"/"all" stay words
-        with self.lock:
-            reply = self.engine.skill_transport(args, "window button")
-            return {"ok": not reply.error, "text": reply.text,
-                    "html": md_to_html(reply.text), "error": reply.error}
+        acquired = self.lock.acquire(timeout=0.08)
+        if acquired:
+            try:
+                reply = self.engine.skill_transport(args, "window button")
+            finally:
+                self.lock.release()
+        else:
+            # the assistant is in the middle of a turn (a model answer holds
+            # the lock for a second or more).  A playback key must not wait
+            # that out: talk to mpv directly, and let the next status poll
+            # bring the context and the saved session up to date.
+            fast = self.engine.fast_transport(args)
+            if fast is None:
+                with self.lock:
+                    reply = self.engine.skill_transport(args, "window button")
+            else:
+                reply = fast
+        return {"ok": not reply.error, "text": reply.text,
+                "html": md_to_html(reply.text), "error": reply.error}
 
     def play(self, target: str, shuffle: bool | None = None) -> dict:
         args: dict = {"target": target}

@@ -24,6 +24,7 @@ queue; the open player has no import feature.
     music data                           # backup/export/import the profile
     music verify
     music shell                          # a shell in the library
+    music kill [--keep-mpv]              # stop window, server, agent and mpv
 
 Playback runs in one headless mpv daemon listening on `MPV_SOCKET`
 (`/tmp/mpv.sock`); `music play` starts it on demand.
@@ -434,6 +435,21 @@ def cmd_shell(args) -> int:
     return 0
 
 
+def cmd_kill(args) -> int:
+    """Stop every process of the running app, so the next start is clean.
+
+    An upgrade replaces files, not a running window: the old process keeps
+    answering with its old code.  This is the one command that ends the whole
+    session instead of asking the user to find PIDs by hand.  The player is
+    stopped as well; ``--keep-mpv`` leaves playback running.
+    """
+    from chat import procs
+    return procs.kill_all(
+        socket_path=getattr(args, "socket", None),
+        keep_mpv=bool(getattr(args, "keep_mpv", False)),
+        dry_run=bool(getattr(args, "dry_run", False)))
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -532,6 +548,12 @@ so every option of that tool works unchanged:
                    help="also re-check every tag against the inventory")
     sub.add_parser("shell", help="a shell in the library")
 
+    p = sub.add_parser("kill", help="stop the window, server, agent and mpv")
+    p.add_argument("--keep-mpv", action="store_true",
+                   help="stop the app but leave playback running")
+    p.add_argument("--dry-run", action="store_true",
+                   help="list what would be stopped")
+
     p = sub.add_parser("chat", help="talk to the library (skills, playlists)")
     p.add_argument("message", nargs="?",
                    help="handle one message, print the answer, exit")
@@ -564,7 +586,7 @@ so every option of that tool works unchanged:
         "seek": cmd_seek, "vol": cmd_vol, "status": cmd_status,
         "search": cmd_search, "mood": cmd_mood, "index": cmd_index,
         "verify": cmd_verify,
-        "shell": cmd_shell, "chat": cmd_chat,
+        "shell": cmd_shell, "chat": cmd_chat, "kill": cmd_kill,
     }[args.command]
     try:
         return handler(args)

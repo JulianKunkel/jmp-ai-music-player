@@ -8,10 +8,21 @@ from __future__ import annotations
 
 import os
 import shutil
+import threading
 from pathlib import Path
 
 from .catalog import clock
 from mpvctl import Mpv, MpvError
+
+
+def _serialised(method):
+    """Run a player call while holding the one mpv connection."""
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    wrapper.__name__ = method.__name__
+    wrapper.__doc__ = method.__doc__
+    return wrapper
 
 
 class Player:
@@ -19,15 +30,21 @@ class Player:
         self.socket = socket or os.environ.get("MPV_SOCKET") or "/tmp/mpv.sock"
         self.audio = audio or os.environ.get("MPV_AO") or None
         self._client: Mpv | None = None
+        #: one mpv connection cannot answer two requests at once.  The window
+        #: sends a pause while the status poll is reading, so every call that
+        #: talks to mpv is serialised here.
+        self._lock = threading.RLock()
 
     # -- internals ---------------------------------------------------------
 
     @property
     def client(self) -> Mpv:
-        if self._client is None:
-            self._client = Mpv(self.socket)
-        return self._client
+        with self._lock:
+            if self._client is None:
+                self._client = Mpv(self.socket)
+            return self._client
 
+    @_serialised
     def running(self) -> bool:
         return self.client.alive()
 
@@ -37,6 +54,7 @@ class Player:
 
     # -- playback ----------------------------------------------------------
 
+    @_serialised
     def play(self, target: str, append: bool = False,
              shuffle: bool = False) -> tuple[bool, str]:
         if not (self.running() or shutil.which(os.environ.get("MPV_BIN") or "mpv")):
@@ -51,6 +69,7 @@ class Player:
         except (SystemExit, MpvError, OSError, ValueError) as exc:
             return False, str(exc)
 
+    @_serialised
     def command(self, action: str, value: float | None = None
                 ) -> tuple[bool, str]:
         if not self.running():
@@ -109,6 +128,7 @@ class Player:
         except (MpvError, OSError, ValueError) as exc:
             return False, str(exc)
 
+    @_serialised
     def set_loudness(self, value: str) -> tuple[bool, str]:
         """Set mpv's audio filter; an empty value restores the raw audio.
 
@@ -123,6 +143,7 @@ class Player:
         except (MpvError, OSError, ValueError) as exc:
             return False, str(exc)
 
+    @_serialised
     def status(self) -> dict | None:
         if not self.running():
             return None
@@ -131,6 +152,7 @@ class Player:
         except (MpvError, OSError):
             return None
 
+    @_serialised
     def queue(self, around: int = 4) -> list[tuple[int, str]]:
         """The current entry and its neighbours, 1-based, as (index, path)."""
         if not self.running():
@@ -150,6 +172,7 @@ class Player:
         except (MpvError, OSError, ValueError, TypeError):
             return []
 
+    @_serialised
     def queue_from(self, limit: int = 200) -> list[tuple[int, str]]:
         """The current entry and what follows it, 1-based (index, path).
 

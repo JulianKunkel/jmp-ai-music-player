@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  AppStream metadata for JulAIn Music Player (JMP).
+
+  The Debian package installs this file as
+  /usr/share/metainfo/de.gwdg.jmp.julain-music-player.metainfo.xml, which is
+  what GNOME Software / App Center and the other AppStream clients read.  The
+  component id is reverse-DNS on purpose; the application itself is reached
+  through <launchable>, which must stay in sync with the installed desktop
+  file (julians-music-app.desktop in this folder).
+
+  Check it with appstreamcli validate (see packaging/README or build-deb.sh,
+  which runs the same validation on the staged file).
+-->
+<component type="desktop-application">
+
+  <id>de.gwdg.jmp.julain-music-player</id>
+
+  <name>JulAIn Music Player</name>
+  <summary>Chat with your music: play, search and shape your own library</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+
+  <developer id="de.gwdg">
+    <name>Julian M. Kunkel</name>
+  </developer>
+
+  <description>
+    <p>
+      JulAIn Music Player indexes a music folder you already own and plays it
+      through mpv.  You search it, queue it, build playlists, rank tracks by
+      measured psychoacoustics, read timed lyrics and change every setting by
+      typing or speaking a sentence in English or German.
+    </p>
+    <p>What it does:</p>
+    <ul>
+      <li>Talk to the library: “play something chill for an hour”, “find the most aggressive songs”, “make a smart playlist of 90s metal”.</li>
+      <li>Measure every song: 35 audio features become twelve sound axes, five profile sets and eight sound families, and every ranking explains why a track ranks where it does.</li>
+      <li>Read and edit tags and cover art, back up the measured data once a day, and inspect the library's health.</li>
+      <li>Search lyrics transcribed locally with Whisper, and ask for songs “about the sea” instead of by title.</li>
+      <li>Play through mpv with media keys and MPRIS, endless mode and radio, and a queue that survives closing the window.</li>
+    </ul>
+    <p>
+      The offline intent parser is the default; an optional OpenAI-compatible
+      planner can be configured in the window.  Nothing leaves the machine
+      unless you pick a remote model or ask for an online catalogue match.
+      The player never deletes audio and journals every playlist write.  The
+      window runs on GTK/WebKit and falls back to a browser window.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">julians-music-app.desktop</launchable>
+
+  <provides>
+    <binary>music-cli</binary>
+  </provides>
+
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+    <category>Player</category>
+  </categories>
+
+  <keywords>
+    <keyword>music</keyword>
+    <keyword>player</keyword>
+    <keyword>library</keyword>
+    <keyword>playlist</keyword>
+    <keyword>audio</keyword>
+    <keyword>lyrics</keyword>
+    <keyword>mpv</keyword>
+  </keywords>
+
+  <icon type="stock">julians-music-app</icon>
+
+  <screenshots>
+    <screenshot type="default">
+      <caption>The sound profile: twelve measured axes as a net diagram, one slider per axis</caption>
+      <image type="source">https://raw.githubusercontent.com/JulianKunkel/jmp-ai-music-player/main/docs/screenshots/sound-profile.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>One search box for titles, playlists and sung lines</caption>
+      <image type="source">https://raw.githubusercontent.com/JulianKunkel/jmp-ai-music-player/main/docs/screenshots/search.png</image>
+    </screenshot>
+  </screenshots>
+
+  <content_rating type="oars-1.1"/>
+
+  <url type="homepage">https://github.com/JulianKunkel/jmp-ai-music-player</url>
+  <url type="bugtracker">https://github.com/JulianKunkel/jmp-ai-music-player/issues</url>
+  <url type="vcs-browser">https://github.com/JulianKunkel/jmp-ai-music-player</url>
+  <url type="contribute">https://github.com/JulianKunkel/jmp-ai-music-player</url>
+
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </supports>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#0ea5e9</color>
+    <color type="primary" scheme_preference="dark">#67e8f9</color>
+  </branding>
+
+  <releases>
+    <release version="1.2.4" date="2026-11-22">
+      <description>
+        <p>
+          The package now ships AppStream metadata, so GNOME Software and App
+          Center show the player with its name, description, icon,
+          screenshots and release history.  The 48–512 px icon sizes are part
+          of the package again.
+        </p>
+      </description>
+    </release>
+    <release version="1.2.3" date="2026-11-22">
+      <description>
+        <p>
+          A media-key test now says why it failed: an app window older than
+          the page, a missing or unreachable server address, or no MPRIS
+          player.  A plain F5–F8 that still reaches the window although a
+          global binding exists is logged and reported as “not grabbed”.
+        </p>
+      </description>
+    </release>
+    <release version="1.2.2" date="2026-11-22">
+      <description>
+        <p>
+          The global media keys reach the running player again: the bindings
+          call a helper that finds the live server, the MPRIS player or the
+          CLI instead of a fixed “music-cli”.  A Test button shows the route
+          that works and names a conflicting shortcut.
+        </p>
+      </description>
+    </release>
+    <release version="1.2.1" date="2026-11-22">
+      <description>
+        <p>
+          The GNOME global media-key bindings use bare F5–F8 instead of the
+          accelerator string “&lt;F5&gt;”, which GNOME ignored.  Existing
+          entries are rewritten in place on the next install.
+        </p>
+      </description>
+    </release>
+    <release version="1.2.0" date="2026-11-22">
+      <description>
+        <p>
+          Global media keys become a setting: Settings → Playback installs
+          and removes the four GNOME shortcuts in one click, leaves every
+          other custom shortcut alone, and says plainly that a plain F5–F8
+          is focus-only until the bindings are installed.
+        </p>
+      </description>
+    </release>
+  </releases>
+
+</component>

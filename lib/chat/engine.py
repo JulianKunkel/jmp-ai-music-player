@@ -1835,6 +1835,63 @@ class Engine:
         self.profile.set_setting("shuffle_mode", on)
         return on
 
+    def fast_transport(self, args: dict) -> Reply | None:
+        """A playback key while the assistant is busy.
+
+        A chat turn holds the service lock for as long as the planner takes
+        (a language-model answer is easily a second), so a play/pause press
+        would wait for the whole turn.  This path talks to mpv only: no
+        context, profile or session write happens here — the two-second poll
+        reconciles all three a moment later.  It answers ``None`` whenever the
+        usual path must run instead (nothing loaded, unknown action), and the
+        caller then waits for the lock as it always did.
+        """
+        action = str((args or {}).get("action") or "").casefold()
+        if action == "shuffle":
+            action = "shuffle_on"
+        value = (args or {}).get("value")
+        if action in {"shuffle_on", "shuffle_off", "repeat_all", "repeat_one",
+                      "repeat_off", "speed_delta", "unmute", "position",
+                      "restart"}:
+            return None
+        if action not in {"pause", "resume", "toggle", "stop", "next", "prev",
+                          "seek", "seek_abs", "volume", "volume_delta",
+                          "mute", "speed"}:
+            return None
+        if (action in {"seek", "seek_abs", "volume", "volume_delta", "speed"}
+                and value is None):
+            return None                  # the slow path explains the missing value
+        status = self.player.status() or {}
+        if not status or status.get("idle") or not int(
+                status.get("playlist_count") or 0):
+            return None                  # let the slow path start what was last
+        if action == "prev":
+            elapsed = float(status.get("position") or status.get("time") or 0)
+            pos = int(status.get("playlist_pos") or 0)
+            if elapsed > PREV_RESTART_S or pos <= 0:
+                ok, message = self.player.command("seek_abs", 0.0)
+                return Reply("Restarted this track." if ok else message,
+                             error=not ok, tool="player")
+        ok, message = self.player.command(action, value)
+        if not ok:
+            return Reply(message, error=True, tool="player")
+        labels = {"pause": "Paused.", "resume": "Continuing.",
+                  "toggle": "Toggled.", "stop": "Stopped.",
+                  "next": "Next.", "prev": "Previous.", "mute": "Muted."}
+        if action == "speed":
+            return Reply(f"Speed {float(value):g}×", tool="player")
+        if action in {"seek", "seek_abs", "volume", "volume_delta"}:
+            number = float(value or 0)
+            if action == "seek":
+                return Reply(f"Jumped {number:+.0f} s", tool="player")
+            if action == "seek_abs":
+                return Reply(f"Jumped to {clock(number)}", tool="player")
+            if action == "volume":
+                return Reply(f"Volume {int(round(number))}%", tool="player")
+            verb = "Louder" if number > 0 else "Quieter"
+            return Reply(f"{verb} by {abs(int(round(number)))}%", tool="player")
+        return Reply(labels.get(action, action.title()), tool="player")
+
     def skill_transport(self, args: dict, request: str) -> Reply:
         action = str(args.get("action") or "status").casefold()
         if action == "shuffle":

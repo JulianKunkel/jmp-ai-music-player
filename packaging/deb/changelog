@@ -1,3 +1,38 @@
+jmp-ai-music-player (1.2.4-1) unstable; urgency=medium
+
+  * Ship AppStream metadata: /usr/share/metainfo/
+    de.gwdg.jmp.julain-music-player.metainfo.xml describes the application
+    (name, summary, description, icon, categories, screenshots, release
+    history), so GNOME Software and App Center show JulAIn Music Player
+    instead of an unnamed package with a generic icon.  The component links
+    to julians-music-app.desktop and declares the music-cli binary.
+  * The maintainer scripts refresh the AppStream catalogue after install and
+    removal, next to the existing desktop and icon caches (best effort).
+  * The build validates the metadata with appstreamcli when it is available
+    and only warns when the validator is missing, so a minimal build host
+    still produces a package.
+  * The package carries the 48/64/128/256/512 px icon sizes again.  1.2.1 to
+    1.2.3 shipped only the scalable SVG because the build machine had no
+    Inkscape; the scalable icon is still installed next to the rasters.
+  * New `music-cli kill [--keep-mpv] [--dry-run]`: stop the window, the chat
+    server, the media-key agent and the mpv daemon of a session.  An upgrade
+    replaces files, not a running program, so this is the honest way to end
+    the old one instead of hunting for PIDs; it touches no music file, tag or
+    playlist.  The container launcher runs both halves, and the stale-window
+    advice in the window names the command.
+  * Playback answers immediately again.  A play/pause press or media key used
+    to wait for whatever else held the service lock (a chat turn with the
+    language model takes about a second): the transport route now answers from
+    a small mpv-only path when the lock is busy, and the page's own reads were
+    made cheap — the ASR/GPU probe is asked once, the lyric and profile counts
+    and the playlist entry counts are cached by the file they read.  Measured
+    on a 17,000-track library: `/api/state` 470 ms to about 25 ms, `/api/work`
+    380 ms to about 7 ms, and a key during a chat turn about 80 ms instead of
+    a full second.
+  * No music file, tag or playlist is touched.
+
+ -- Julian M. Kunkel <julian.kunkel@gwdg.de>  Sun, 22 Nov 2026 20:40:00 +0100
+
 jmp-ai-music-player (1.2.3-1) unstable; urgency=medium
 
   * Make the media-key diagnosis honest instead of one message for every

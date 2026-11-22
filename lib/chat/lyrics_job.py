@@ -44,6 +44,9 @@ _RE_TRACK = re.compile(r"^\[lyrics\] (?!done:|backend|no such|already)(.+)$")
 
 #: interpreter -> probe result, per root, for this process only
 _PROBED: dict[str, str] = {}
+#: the CUDA answer per interpreter.  Asking costs one subprocess (~0.3 s), and
+#: the page asks for the state on every refresh — so it is asked once and kept.
+_GPU: dict[str, str] = {}
 
 
 def job_dir(root: Path) -> Path:
@@ -135,23 +138,35 @@ def interpreter(root: Path) -> str:
 
 
 def forget_backend(root: Path) -> None:
-    _PROBED.pop(str(Path(root)), None)
+    key = str(Path(root))
+    _PROBED.pop(key, None)
+    _GPU.pop(key, None)
+
+
+def _gpu(python: str) -> str:
+    """`yes`/`no`/`unknown` for one interpreter, asked once per process."""
+    if not python:
+        return "unknown"
+    if python in _GPU:
+        return _GPU[python]
+    gpu = "unknown"
+    try:
+        result = subprocess.run(
+            [python, "-c",
+             "import ctranslate2; print(ctranslate2.get_cuda_device_count())"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, timeout=20, text=True)
+        gpu = "yes" if result.stdout.strip() not in {"", "0"} else "no"
+    except (OSError, subprocess.SubprocessError):
+        gpu = "unknown"
+    _GPU[python] = gpu
+    return gpu
 
 
 def backend_info(root: Path) -> dict:
     root = Path(root)
     python = interpreter(root)
-    gpu = "unknown"
-    if python:
-        try:
-            result = subprocess.run(
-                [python, "-c",
-                 "import ctranslate2; print(ctranslate2.get_cuda_device_count())"],
-                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL, timeout=20, text=True)
-            gpu = "yes" if result.stdout.strip() not in {"", "0"} else "no"
-        except (OSError, subprocess.SubprocessError):
-            gpu = "unknown"
+    gpu = _gpu(python)
     models = []
     folder = models_path(root)
     if folder.is_dir():
@@ -429,12 +444,38 @@ def _tail(root: Path, job: dict, limit: int = 120) -> list[str]:
     return raw[-limit:]
 
 
+#: the last answer per database + inventory stamp.  Reading the 17k-row
+#: inventory costs ~25 ms, and the footer/state ask for it every couple of
+#: seconds, so a stamp that has not moved answers from here.
+_COUNTS: dict[tuple, dict] = {}
+
+
+def _stamp(path: Path) -> tuple:
+    try:
+        info = path.stat()
+    except OSError:
+        return (str(path), 0, 0)
+    return (str(path), info.st_size, info.st_mtime_ns)
+
+
 def counts(root: Path) -> dict:
     """How much of the library has lyrics (read-only, tolerant)."""
     path = db_path(root)
+    inventory = Path(root) / "library-work" / "inventory" / "files.jsonl"
+    # a WAL database writes into `<db>-wal` until it is checkpointed, so the
+    # stamp covers that sidecar too.  `<db>-shm` is shared memory: its mtime
+    # moves on every read, which would defeat the cache, and it never holds a
+    # row on its own.
+    stamp = (_stamp(path), _stamp(Path(str(path) + "-wal")),
+             _stamp(inventory))
+    cached = _COUNTS.get(stamp)
+    if cached is not None:
+        return dict(cached)
     result = {"exists": path.is_file(), "tracks": 0, "lines": 0,
               "audio": 0, "last": ""}
     if not path.is_file():
+        _COUNTS.clear()
+        _COUNTS[stamp] = dict(result)
         return result
     try:
         import sqlite3
@@ -449,7 +490,6 @@ def counts(root: Path) -> dict:
             conn.close()
     except Exception:                    # a locked or older DB is not an error
         pass
-    inventory = Path(root) / "library-work" / "inventory" / "files.jsonl"
     if inventory.is_file():
         # the extension is an inventory field, not the line's last key, so match
         # `"ext": ".mp3"` rather than the end of the record
@@ -466,4 +506,6 @@ def counts(root: Path) -> dict:
             result["audio"] = audio
         except OSError:
             pass
+    _COUNTS.clear()
+    _COUNTS[stamp] = dict(result)
     return result

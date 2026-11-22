@@ -36,7 +36,7 @@ application/
 ├── build-image.sh              docker/podman build only
 ├── build-deb.sh                Debian/Ubuntu package (dist/*.deb)
 ├── publish-release.sh          tag + GitHub release + asset upload
-├── packaging/deb/              launcher, man page, copyright, maintainer scripts
+├── packaging/deb/              launcher, man page, AppStream metadata, copyright, scripts
 ├── docs/screenshots/           the real captures used above
 ├── VERSION                     release version of the package
 ├── Dockerfile                  the image (build context = this folder)
@@ -335,6 +335,7 @@ music-cli add ~/Downloads/song.flac    # tag + file + index
 music-cli mood list | mood play chill | mood build
 music-cli index                       # rescan + rebuild the generated lists
 music-cli verify
+music-cli kill                        # stop window, server, agent and mpv
 music-cli shell                       # a shell in the library
 ```
 

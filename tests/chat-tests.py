@@ -17,6 +17,7 @@ import http.client
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -2527,6 +2528,120 @@ def check_pwa(work: Path) -> None:
         shutil.rmtree(lib, ignore_errors=True)
 
 
+def check_fast_transport(work: Path) -> None:
+    """A playback key answers even while the assistant holds the lock.
+
+    A chat turn keeps the service lock for the whole planner call (a model
+    answer is a second or more), so a play/pause press used to wait for it.
+    The fast path talks to mpv only and declines whenever the normal path is
+    needed (nothing loaded, an action that changes stored state).
+    """
+    root = work / "fast-library"
+    rel = "Artists/Wild_Silk/dreams_doubts/10_Beside.mp3"
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"x")
+    inv = root / "library-work" / "inventory" / "files.jsonl"
+    inv.parent.mkdir(parents=True, exist_ok=True)
+    inv.write_text(json.dumps({
+        "rel_path": rel, "title": "Beside the old tree",
+        "artist": "Wild Silk", "albumartist": "Wild Silk",
+        "album": "dreams_doubts", "genre": "Rock", "grouping": "Bands",
+        "duration_s": 388, "size_bytes": 1000, "bitrate": 192000,
+        "ext": ".mp3"}) + "\n", encoding="utf-8")
+    service = ChatService(root=root, use_llm=False, dry_run=True,
+                          auto_psycho=False)
+    from chat import session
+
+    class Remote:
+        def __init__(self):
+            self.state = {"idle": True, "pause": False, "time": 0.0,
+                          "playlist_count": 0, "playlist_pos": -1,
+                          "volume": 100.0}
+            self.commands: list[tuple] = []
+
+        def status(self):
+            return dict(self.state)
+
+        def command(self, action, value=None):
+            self.commands.append((action, value))
+            if action == "toggle":
+                self.state["pause"] = not self.state.get("pause")
+            elif action == "pause":
+                self.state["pause"] = True
+            elif action == "seek_abs":
+                self.state["time"] = float(value or 0)
+            return True, ""
+
+        def running(self):
+            return True
+
+        def status_line(self, root=None):
+            return "remote"
+
+        def queue_from(self, limit=200):
+            return []
+
+    remote = Remote()
+    service.engine.player = remote
+    check("the fast path declines while nothing plays",
+          service.engine.fast_transport({"action": "toggle"}) is None)
+    check("the fast path declines a state action",
+          service.engine.fast_transport({"action": "shuffle_on"}) is None)
+    remote.state.update({"idle": False, "playlist_count": 2,
+                         "playlist_pos": 0, "time": 42.0})
+    reply = service.engine.fast_transport({"action": "toggle"})
+    check("the fast path toggles a playing track",
+          reply is not None and reply.text == "Toggled.", str(reply)[:120])
+    check("the fast path reached mpv", ("toggle", None) in remote.commands)
+    reply = service.engine.fast_transport({"action": "prev"})
+    check("the fast path restarts a track past its start",
+          reply is not None and reply.text == "Restarted this track.",
+          str(reply)[:120])
+    reply = service.engine.fast_transport({"action": "seek", "value": 30})
+    check("the fast path labels a jump",
+          reply is not None and reply.text == "Jumped +30 s",
+          str(reply)[:120])
+    check("the fast path declines a jump without a value",
+          service.engine.fast_transport({"action": "seek"}) is None)
+
+    # the lock is held, as it is during a chat turn
+    held, release = threading.Event(), threading.Event()
+
+    def hog():
+        with service.lock:
+            held.set()
+            release.wait(5)
+
+    thread = threading.Thread(target=hog)
+    thread.start()
+    held.wait(2)
+    before = len(remote.commands)
+    started = time.monotonic()
+    out = service.transport("pause")
+    elapsed = time.monotonic() - started
+    release.set()
+    thread.join()
+    check("a key is answered while the lock is held", elapsed < 1.0,
+          f"{elapsed:.2f} s")
+    check("the fast path answered the key", bool(out.get("ok")),
+          str(out)[:200])
+    check("mpv got the pause",
+          len(remote.commands) == before + 1
+          and remote.commands[-1][0] == "pause",
+          str(remote.commands[-2:]))
+
+    # without contention the normal path runs, side effects included
+    session.clear(root)
+    before = len(remote.commands)
+    reply = service.transport("toggle")
+    check("a free lock uses the transport skill",
+          bool(reply.get("ok")) and reply.get("text") == "Toggled.",
+          str(reply)[:200])
+    check("the normal path also reached mpv",
+          len(remote.commands) > before, str(remote.commands[-2:]))
+
+
 def check_media_transport(work: Path) -> None:
     """A media key never leaves the room silent.
 
@@ -3202,6 +3317,135 @@ def check_window() -> None:
           "_prepare(" in agent_src and "register_object" not in
           agent_src.split("def _own")[1].split("def quit")[0],
           "a retry would register the same object twice")
+
+
+def check_kill() -> None:
+    """`music-cli kill` ends a whole session and touches nothing else.
+
+    Reported after 1.2.3: an old window kept answering after an upgrade, and
+    the only honest advice was "close it completely" — which is hard when the
+    process is invisible.  The matching must therefore be narrow enough that
+    an unrelated mpv, an editor with the file open, or another python process
+    is never in the list.
+    """
+    from chat import procs
+
+    known = [
+        (["/usr/bin/python3", "/usr/lib/jmp/lib/chat/window.py",
+          "--backend", "gtk3", "http://127.0.0.1:8765/?t=x"], "window"),
+        (["/home/u/.local/share/julians-music-app/lib/chat/window.py",
+          "http://127.0.0.1:8765/?t=x"], "window"),
+        (["/usr/bin/python3", "/usr/lib/jmp/lib/music.py", "chat", "--web",
+          "--no-open", "--host", "0.0.0.0"], "server"),
+        (["music", "chat", "--web", "--no-open"], "server"),
+        (["/usr/bin/python3", "/opt/music/app/chat/media_keys.py",
+          "--url", "http://127.0.0.1:8765/?t=x"], "mpris"),
+        (["mpv", "--idle=yes", "--input-ipc-server=/tmp/mpv.sock"], "player"),
+        (["mpv", "--idle=yes", "--audio-client-name=music"], "player"),
+    ]
+    for argv, role in known:
+        check(f"a {role} process is recognised",
+              procs.classify(argv, "/tmp/mpv.sock") == role, str(argv))
+
+    strangers = [
+        ["/usr/bin/python3", "/usr/lib/jmp/lib/music.py", "play", "Bands"],
+        ["/usr/bin/python3", "/usr/lib/jmp/lib/music.py", "kill"],
+        ["mpv", "/home/u/film.mkv"],
+        ["mpv", "--idle=yes", "--input-ipc-server=/tmp/other.sock"],
+        ["vim", "/usr/lib/jmp/lib/chat/window.py"],
+        ["/usr/bin/python3", "-c", "import time; time.sleep(1)"],
+    ]
+    for argv in strangers:
+        check(f"{argv[-1]} is not mistaken for the app",
+              procs.classify(argv, "/tmp/mpv.sock") == "", str(argv))
+
+    fake = [
+        (101, ["/usr/bin/python3", "/x/lib/chat/window.py", "URL"]),
+        (102, ["/usr/bin/python3", "/x/lib/music.py", "chat", "--web"]),
+        (103, ["/usr/bin/python3", "/x/lib/chat/media_keys.py", "--url", "u"]),
+        (104, ["mpv", "--input-ipc-server=/tmp/mpv.sock"]),
+        (105, ["mpv", "--input-ipc-server=/tmp/other.sock"]),
+        (106, ["sleep", "1000"]),
+    ]
+    found = procs.find("/tmp/mpv.sock", processes=fake)
+    check("a session is found in stop order",
+          [(p.pid, p.role) for p in found] ==
+          [(101, "window"), (102, "server"), (103, "mpris"), (104, "player")],
+          str([(p.pid, p.role) for p in found]))
+    check("an unrelated player and process stay out of the session",
+          105 not in [p.pid for p in found] and 106 not in [p.pid for p in found],
+          str([p.pid for p in found]))
+
+    # a real child, so SIGTERM/SIGKILL are exercised rather than described
+    victim = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)",
+         "/tmp/example/chat/window.py", "--backend", "gtk3", "http://x"])
+    bystander = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        outcome = procs.stop([procs.Proc(victim.pid, "window",
+                                         tuple(victim.args))], grace=2.0)
+        check("kill ends the matched process",
+              victim.poll() is not None
+              and outcome[0].result in ("stopped", "killed"),
+              str(outcome))
+        check("kill does not touch an unrelated process",
+              bystander.poll() is None)
+    finally:
+        for child in (victim, bystander):
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=10)
+
+    ready = Path(tempfile.mkdtemp()) / "ready"
+    stubborn = subprocess.Popen(
+        [sys.executable, "-c",
+         "import signal, sys, time, pathlib; "
+         "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+         "pathlib.Path(sys.argv[1]).write_text('x'); time.sleep(60)", str(ready)])
+    try:
+        for _ in range(100):
+            if ready.exists():
+                break
+            time.sleep(0.02)
+        outcome = procs.stop([procs.Proc(stubborn.pid, "window",
+                                         tuple(stubborn.args))], grace=0.3)
+        check("a process that ignores SIGTERM is killed",
+              outcome[0].result == "killed" and stubborn.poll() is not None,
+              str(outcome))
+    finally:
+        if stubborn.poll() is None:
+            stubborn.kill()
+        stubborn.wait(timeout=10)
+
+    live = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    socket_path = Path(tempfile.mkdtemp()) / "mpv.sock"
+    live.bind(str(socket_path))
+    live.listen(1)
+    try:
+        check("a socket a player still answers on is kept",
+              procs.cleanup_socket(str(socket_path)) is None
+              and socket_path.exists(), str(socket_path))
+    finally:
+        live.close()
+    check("a stale socket is removed",
+          procs.cleanup_socket(str(socket_path)) == socket_path
+          and not socket_path.exists(), str(socket_path))
+
+    music_src = (LIB / "music.py").read_text(encoding="utf-8")
+    check("music-cli offers kill",
+          'add_parser("kill"' in music_src
+          and '"kill": cmd_kill' in music_src, "no such subcommand")
+    check("kill keeps playback when asked to",
+          "--keep-mpv" in music_src and "keep_mpv" in music_src,
+          "playback could not survive a window restart")
+    installer = (LIB.parent / "install.sh").read_text(encoding="utf-8")
+    check("the docker launcher kills both halves",
+          "music kill" in installer and 'chat/procs.py" kill' in installer,
+          "a container-only kill would leave the old host window")
+    page = (LIB / "chat" / "webui" / "app.js").read_text(encoding="utf-8")
+    check("the stale-window advice names the command",
+          page.count("music-cli kill") >= 2, "the advice would send the user hunting")
 
 
 def check_journey(work: Path) -> None:
@@ -7294,7 +7538,9 @@ def main() -> int:
         check_explain(work)
         check_pwa(work)
         check_window()
+        check_kill()
         check_media_transport(work)
+        check_fast_transport(work)
         check_journey(work)
         check_library_data(work)
 

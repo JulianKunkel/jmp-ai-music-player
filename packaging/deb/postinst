@@ -16,5 +16,10 @@ fi
 if command -v gtk-update-icon-cache >/dev/null 2>&1; then
     gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor >/dev/null 2>&1 || true
 fi
+# AppStream metadata (/usr/share/metainfo/…): rebuild the software catalogue so
+# GNOME Software / App Center shows the app without a restart.
+if command -v appstreamcli >/dev/null 2>&1; then
+    appstreamcli refresh-cache --force >/dev/null 2>&1 || true
+fi
 
 exit 0

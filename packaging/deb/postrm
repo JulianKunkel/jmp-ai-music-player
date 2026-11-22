@@ -16,6 +16,10 @@ case "${1:-}" in
         if command -v gtk-update-icon-cache >/dev/null 2>&1; then
             gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor >/dev/null 2>&1 || true
         fi
+        # drop the app from the AppStream catalogue that GNOME Software reads
+        if command -v appstreamcli >/dev/null 2>&1; then
+            appstreamcli refresh-cache --force >/dev/null 2>&1 || true
+        fi
         ;;
 esac
 

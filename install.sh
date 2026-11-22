@@ -881,6 +881,26 @@ COMPOSE="$COMPOSE_FILE"
 DOCKER="$DOCKER_BIN"
 APP_DIR="$APP_DIR"
 
+# ---- kill ---------------------------------------------------------------
+# A session has two halves: the server and mpv in the container, the GTK
+# window and the MPRIS agent on the host.  Stop both; a kill that left the
+# old window running would not fix the problem it is meant to fix.
+if [ "\${1:-}" = kill ]; then
+    shift
+    status=0
+    if "\$DOCKER" compose -f "\$COMPOSE" ps --status running --quiet \\
+            2>/dev/null | grep -q .; then
+        "\$DOCKER" compose -f "\$COMPOSE" exec -T music music kill "\$@" \\
+            || status=1
+    fi
+    for py in python3 /usr/bin/python3 /usr/local/bin/python3; do
+        command -v "\$py" >/dev/null 2>&1 || continue
+        "\$py" "\$APP_DIR/chat/procs.py" kill "\$@" || status=1
+        break
+    done
+    exit "\$status"
+fi
+
 if ! "\$DOCKER" compose -f "\$COMPOSE" ps --status running --quiet \\
         2>/dev/null | grep -q .; then
     # first use from the launcher: bring the container up

@@ -77,6 +77,13 @@ the line interface, \fB\-\-no\-llm\fR forces the offline parser and
 .B verify
 Check that the playlists still resolve and that the library is intact.
 .TP
+.BR kill " [\fB\-\-keep\-mpv\fR] [\fB\-\-dry\-run\fR]"
+Stop every process of the running session: the window, the chat server, the
+media-key agent and the mpv daemon.  An upgrade replaces files, not a running
+program, so this is what ends the old one; \fB\-\-keep\-mpv\fR leaves playback
+running and \fB\-\-dry\-run\fR only lists what would be stopped.  No music
+file, tag or playlist is touched.
+.TP
 .B shell
 Open a shell in the library folder.
 .SH ENVIRONMENT

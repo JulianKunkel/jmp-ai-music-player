@@ -8,9 +8,9 @@
 #   ./build-deb.sh --out /tmp/release
 #
 # The package installs the application under /usr/lib/jmp, the launcher as
-# /usr/bin/music-cli, the desktop entry, the icon and the documentation.  It
-# runs on the distribution's Python 3 with python3-mutagen and python3-numpy;
-# no virtualenv and no pip are involved.
+# /usr/bin/music-cli, the desktop entry, the icon, the AppStream metadata and
+# the documentation.  It runs on the distribution's Python 3 with
+# python3-mutagen and python3-numpy; no virtualenv and no pip are involved.
 #
 # An optional download module is NOT part of the open build.  With --modules
 # pointing at a module checkout (or $JMP_MODULES), build-modules.py compiles it
@@ -134,6 +134,22 @@ if command -v inkscape >/dev/null 2>&1; then
     done
 else
     say "[warn] inkscape missing: only the scalable icon is installed"
+fi
+
+# AppStream metadata: GNOME Software / App Center reads this to show the app
+# with its icon, screenshots and release history.  <launchable> names the
+# desktop file above, so the two must move together.
+say "appstream        /usr/share/metainfo"
+METADATA="$STAGE/usr/share/metainfo/de.gwdg.jmp.julain-music-player.metainfo.xml"
+install -D -m 0644 "$HERE/packaging/deb/de.gwdg.jmp.julain-music-player.metainfo.xml" \
+    "$METADATA"
+if command -v appstreamcli >/dev/null 2>&1; then
+    if appstreamcli validate --no-net "$METADATA" >/dev/null 2>&1; then
+        say "                 appstreamcli validate: ok"
+    else
+        say "[warn] appstreamcli validate reported problems:"
+        appstreamcli validate --no-net "$METADATA" 2>&1 | sed 's/^/         /'
+    fi
 fi
 
 say "man page         /usr/share/man/man1/music-cli.1.gz"
