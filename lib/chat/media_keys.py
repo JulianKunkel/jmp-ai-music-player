@@ -76,30 +76,60 @@ class Agent:
 
     # -- the MPRIS name ----------------------------------------------------
 
+    def _prepare(self) -> bool:
+        """Register the MPRIS object once, so a retry only re-asks for the name."""
+        from gi.repository import Gio
+
+        try:
+            connection = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        except Exception:
+            return False
+        if connection is None:
+            return False
+        node = Gio.DBusNodeInfo.new_for_xml(window.MPRIS_XML)
+        for interface in node.interfaces:
+            try:
+                connection.register_object(
+                    window.MPRIS_PATH, interface,
+                    self.media._method, self.media._property, None)
+            except Exception:
+                return False
+        self.media.connection = connection
+        return True
+
     def _own(self) -> None:
         from gi.repository import Gio
 
-        connection = Gio.bus_get_sync(Gio.BusType.SESSION, None)
-        node = Gio.DBusNodeInfo.new_for_xml(window.MPRIS_XML)
-        for interface in node.interfaces:
-            connection.register_object(
-                window.MPRIS_PATH, interface,
-                self.media._method, self.media._property, None)
-        self.media.connection = connection
+        connection = self.media.connection
+        if connection is None:
+            return
 
         def _acquired(*_args) -> None:
             self.owning = True
+            self.retry_at = 0.0
             window._keylog("agent", "MPRIS", "acquired")
+            try:
+                self.media.refresh()
+            except Exception:
+                pass
 
         def _lost(*_args) -> None:
             # the window is open (or another agent won): stand back and retry
             self.owning = False
             self.name_id = 0
             self.retry_at = time.monotonic() + YIELD_S
-            self.media.connection = None
 
+        if self.name_id:
+            try:
+                Gio.bus_unown_name(self.name_id)
+            except Exception:
+                pass
+            self.name_id = 0
+        # ALLOW_REPLACEMENT: the native window may take the name while it is
+        # open, and the agent simply asks again after the window closes.  It
+        # must never REPLACE, or window and agent would steal it back and forth.
         self.name_id = Gio.bus_own_name_on_connection(
-            connection, window.MPRIS_NAME, Gio.BusNameOwnerFlags.NONE,
+            connection, window.MPRIS_NAME, Gio.BusNameOwnerFlags.ALLOW_REPLACEMENT,
             _acquired, _lost)
         self.media.refresh()
 
@@ -135,7 +165,10 @@ class Agent:
         if (not self.owning and not self.name_id
                 and time.monotonic() >= self.retry_at):
             try:
-                self._own()
+                if self.media.connection is None and not self._prepare():
+                    self.retry_at = time.monotonic() + YIELD_S
+                else:
+                    self._own()
             except Exception:
                 self.retry_at = time.monotonic() + YIELD_S
         self.media.status = status
@@ -182,6 +215,8 @@ def main(argv: list[str] | None = None) -> int:
     agent = Agent(url)
     loop = GLib.MainLoop()
     agent.loop = loop
+    if not agent._prepare():
+        return 3                        # no session bus / no object to export
 
     for sig in (signal.SIGTERM, signal.SIGINT):
         try:

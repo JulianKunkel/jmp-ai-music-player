@@ -354,8 +354,12 @@ class _Media:
             except Exception:
                 return False
         try:
+            # REPLACE (not NONE): the window is the real player while it is
+            # open, so it takes the name from the host agent, which owns it
+            # only to survive a closed window.  The agent in turn owns it with
+            # ALLOW_REPLACEMENT and retries after the window closes.
             Gio.bus_own_name_on_connection(
-                self.connection, MPRIS_NAME, Gio.BusNameOwnerFlags.NONE,
+                self.connection, MPRIS_NAME, Gio.BusNameOwnerFlags.REPLACE,
                 None, None)
         except Exception:
             return False

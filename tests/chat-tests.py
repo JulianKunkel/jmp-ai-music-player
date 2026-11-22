@@ -2634,6 +2634,23 @@ def check_window() -> None:
     check("the launcher starts the agent next to the window",
           'chat/media_keys.py" --url' in installer,
           "the wrapper has no agent line")
+    check("the launcher only uses an interpreter that has PyGObject",
+          '-c "import gi" >/dev/null 2>&1 || continue' in installer,
+          "the agent would start under a python3 without gi")
+    # The handover must not flap: the window REPLACEs (it is the real player
+    # while open), the agent only ALLOWs replacement and asks again later.
+    check("the window takes the MPRIS name from the agent",
+          "Gio.BusNameOwnerFlags.REPLACE" in source
+          and "Gio.BusNameOwnerFlags.NONE" not in source,
+          "the window cannot take over from the agent")
+    check("the agent allows replacement but never steals the name",
+          "Gio.BusNameOwnerFlags.ALLOW_REPLACEMENT" in agent_src
+          and "BusNameOwnerFlags.REPLACE" not in agent_src,
+          "agent and window would steal the name back and forth")
+    check("the agent exports the MPRIS object once, not on every retry",
+          "_prepare(" in agent_src and "register_object" not in
+          agent_src.split("def _own")[1].split("def quit")[0],
+          "a retry would register the same object twice")
 
 
 def check_journey(work: Path) -> None:

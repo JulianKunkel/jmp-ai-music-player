@@ -1,3 +1,16 @@
+jmp-ai-music-player (1.1.5-1) unstable; urgency=medium
+
+  * The MPRIS handover between window and agent is now real: the native window
+    REPLACEs the agent while it is open (it is the player that matters then) and
+    the agent, which only allows replacement, asks for the name again once the
+    window closes.  Neither side can steal it back from the other.
+  * The agent exports its MPRIS object once instead of on every retry, so a
+    long-running session cannot accumulate duplicate exports.
+  * The launcher starts the agent only with an interpreter that really has
+    PyGObject.
+
+ -- Julian M. Kunkel <julian.kunkel@gwdg.de>  Sun, 22 Nov 2026 17:35:00 +0100
+
 jmp-ai-music-player (1.1.4-1) unstable; urgency=medium
 
   * Media keys now really work on a keyboard whose media row is in function
