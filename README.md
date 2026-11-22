@@ -34,6 +34,10 @@ application/
 ├── install-desktop.sh          one-stop installer: image + compose + launcher (docker)
 ├── install.sh                  the installer itself (--docker / --host)
 ├── build-image.sh              docker/podman build only
+├── build-deb.sh                Debian/Ubuntu package (dist/*.deb)
+├── packaging/deb/              launcher, man page, copyright, maintainer scripts
+├── docs/screenshots/           the real captures used above
+├── VERSION                     release version of the package
 ├── Dockerfile                  the image (build context = this folder)
 ├── compose.yaml                manual compose project for this checkout
 ├── entrypoint.sh               installed in the image as `music`
@@ -67,6 +71,7 @@ application/
 │   │   ├── lyrics.py           reads the lyrics database (timed lines, search)
 │   │   ├── lyrics_job.py       starts/polls the local transcription job
 │   │   └── skills.py           the skill registry/loader
+│   ├── asr/                    bundled local Whisper transcriber + setup
 │   └── skills/                 one SKILL.md per skill
 └── README.md
 ```
@@ -155,6 +160,37 @@ only enters through a local add or, when a build includes an optional
 download module, through that module — which checks duplicates and
 decodability first.
 
+## What it looks like
+
+Three things the window does, captured from a running library of ~17,500
+tracks.  Nothing is mocked up: the numbers, lyrics and results come from the
+library the window was pointed at.
+
+**A sound profile, not a genre tag.**  Every track is measured, ranked against
+the rest of the library and drawn as a net diagram.  Move a slider and the
+nearest tracks are recomputed; the measurements behind each axis are one click
+away under *Why these values*.
+
+![The sound profile of Rammstein – Sonne: a net diagram over twelve axes, one slider per axis, and the rough/dissonant family name](docs/screenshots/sound-profile.png)
+
+**One search over tracks, playlists and sung lines.**  A single query returns
+matching playlists, matching tracks from the tags and the inventory, and the
+lines a song actually sings — so “chill” finds `Mood_Chill`, the tracks tagged
+that way, and the songs whose words say so.
+
+![The search window for “chill”: one playlist, 25 track hits and 3 lyric lines, grouped as Playlists, Tracks and Lyrics](docs/screenshots/search.png)
+
+**A playlist that comes from the words and the sound.**  “songs about the sea
+that are calm” searches the timed lyrics and finds the songs that really sing
+about the sea — Aqua’s *We Belong to the Sea* comes first with five lines
+(×5), while a song that merely passes through “seaside” no longer counts.
+Those hits are then ordered by the measured *Calmness* axis and explained
+(“sound 0.27”); “save that as Calm Seas” writes an ordinary
+`Playlists/Custom/Calm_Seas.m3u8` that every other player can read — and it
+appears in the sidebar like any hand-made list.  The same screenshot shows
+the lyrics panel following the playing line.
+
+
 ## Install on this computer
 
 ```bash
@@ -234,6 +270,50 @@ on the host (`sudo apt install mpv ffmpeg`) and the app is not isolated in a
 container.  The venv gets the same `requirements.txt` as the image.  Audio
 download is not part of it: a build with `--modules DIR` compiles an optional
 download module and installs that module's own requirements.
+
+### Ubuntu / Debian package (.deb)
+
+The release page carries a package built for Ubuntu 24.04 and 26.04
+(“resolute”, Python 3.14):
+
+<https://github.com/JulianKunkel/jmp-ai-music-player/releases>
+
+```bash
+wget https://github.com/JulianKunkel/jmp-ai-music-player/releases/latest/download/jmp-ai-music-player_1.0.0-1_all.deb
+sudo apt install ./jmp-ai-music-player_1.0.0-1_all.deb
+```
+
+It installs the app under `/usr/lib/jmp`, the launcher `/usr/bin/music-cli`,
+the desktop entry, the icon and the manual page (`man music-cli`), and runs on
+the distribution's Python 3 — no virtualenv, no pip.  Dependencies come from
+Ubuntu: `python3-mutagen`, `python3-numpy`, `mpv` and `ffmpeg` are required;
+`python3-gi` + WebKitGTK (native window) and `python3-textual` (terminal UI)
+are recommended.  The package contains **no download feature**; only builds
+with an optional module have one.
+
+Point it at your library once — a folder with `Playlists/` and either
+`Artists/` or `library-work/`:
+
+```bash
+echo "$HOME/Musik" > ~/.config/jmp/library     # or export MUSIC_LIBRARY=…
+music-cli chat --web
+```
+
+The player finds `~/Musik`, `~/Music`, `~/music` and the current folder by
+itself; `~/.config/jmp/library` (or `/etc/jmp/library`) overrides that.
+Indexing, psychoacoustic measurement, lyric transcription and the tag editor
+call the library's own toolkit in `<library>/scripts/` and use its
+`library-work/`; the package ships the player, not those per-library tools.
+
+Build the package from this folder — the script is reproducible, needs only
+`dpkg-deb`, and produces `dist/jmp-ai-music-player_<version>_all.deb` plus a
+SHA-256 file:
+
+```bash
+./build-deb.sh                          # version from VERSION
+./build-deb.sh --version 1.0.1 --out /tmp/release
+./build-deb.sh --modules ../download-modules   # optional: compile a module in
+```
 
 ## What you get
 
@@ -675,10 +755,23 @@ running, paused or cancelling).  The skill is `index-library`
 
 ### Lyrics (local transcription)
 
-The words are transcribed **on this machine**: `scripts/transcribe_lyrics.py`
-runs faster-whisper, stores timed lines in `library-work/app/lyrics/lyrics.db`
-(SQLite with an FTS5 index) and nothing is uploaded — no lyrics site, no cloud
-API.  One-time setup, about 450 MB:
+The words are transcribed **on this machine**: `lib/asr/transcribe_lyrics.py`
+(the same tool the repository keeps in `scripts/`) runs faster-whisper, stores
+timed lines in `library-work/app/lyrics/lyrics.db` (SQLite with an FTS5 index)
+and nothing is uploaded — no lyrics site, no cloud API.  The panel marks the
+line being sung and the chat can search the words, quote them and build a
+playlist from them:
+
+
+The search matches **whole words**, not substrings: “songs about the sea” finds
+songs that sing *sea* or *seas*, not songs that contain “seaside” or “search”.
+Every requested word must appear when possible, songs that return to a word
+rank above one passing mention (the chat shows the count, `×5`), a word in the
+title counts as a theme, and only when nothing matches exactly does a spelling
+fallback look for the closest stored word.  That is why *We Belong to the Sea*
+wins over a track that mentions the sea once in passing.
+
+One-time setup, about 450 MB:
 
 ```bash
 scripts/setup_asr.sh                 # scripts/asr-venv + faster-whisper
@@ -692,6 +785,15 @@ scripts/asr-venv/bin/python scripts/transcribe_lyrics.py --missing 200
 scripts/asr-venv/bin/python scripts/transcribe_lyrics.py --search "boot"
 scripts/asr-venv/bin/python scripts/transcribe_lyrics.py --stats
 ```
+
+The `.deb` carries its own copy (`/usr/lib/jmp/lib/asr/`) and needs no
+`scripts/` folder: the window's sparkle button and the footer chip run that
+copy, `setup_asr.sh` there installs the backend into
+`<library>/library-work/app/lyrics/asr-venv`, and the app probes
+`MUSIC_ASR_PYTHON` → `<library>/scripts/asr-venv/bin/python` →
+`<library>/library-work/app/lyrics/asr-venv/bin/python` → its own interpreter,
+picking the first that can `import faster_whisper`.  The setup is a one-click
+job from the lyrics panel, so nothing has to be typed in a shell.
 
 The model is `auto`: `medium` when `ctranslate2` sees a CUDA device, otherwise
 `small`.  On this machine a 4-minute song takes ≈5.5 s on the GPU and ≈62 s on

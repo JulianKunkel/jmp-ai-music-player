@@ -1,0 +1,43 @@
+#!/bin/sh
+# music-cli — launcher installed by the jmp-ai-music-player Debian package.
+#
+# The app lives in /usr/lib/jmp and runs on the distribution's Python 3.
+# The library is discovered the same way the app discovers it, with two
+# package-specific additions:
+#
+#   1. an explicit MUSIC_LIBRARY always wins;
+#   2. otherwise ~/.config/jmp/library, then /etc/jmp/library (one path per
+#      file, first line), then the usual ~/Musik, ~/Music, ~/music and $PWD.
+#
+# A library folder is recognised by Playlists/ next to Artists/ or
+# library-work/.  Set MUSIC_LIBRARY to any other folder if yours differs.
+set -eu
+
+APP_HOME=/usr/lib/jmp
+PYTHON=/usr/bin/python3
+
+library=""
+if [ -n "${MUSIC_LIBRARY:-}" ]; then
+    library="$MUSIC_LIBRARY"
+elif [ -r "$HOME/.config/jmp/library" ]; then
+    library=$(sed -n '1p' "$HOME/.config/jmp/library")
+elif [ -r /etc/jmp/library ]; then
+    library=$(sed -n '1p' /etc/jmp/library)
+else
+    for candidate in "$HOME/Musik" "$HOME/Music" "$HOME/music" "$PWD"; do
+        if [ -d "$candidate/Playlists" ] &&
+           { [ -d "$candidate/Artists" ] || [ -d "$candidate/library-work" ]; }; then
+            library="$candidate"
+            break
+        fi
+    done
+fi
+if [ -n "$library" ]; then
+    export MUSIC_LIBRARY="$library"
+fi
+
+# One mpv daemon per user, so two accounts on the same machine do not fight
+# over /tmp/mpv.sock.
+export MPV_SOCKET="${MPV_SOCKET:-/tmp/mpv-$(id -u).sock}"
+
+exec "$PYTHON" "$APP_HOME/lib/music.py" "$@"

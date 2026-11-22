@@ -918,12 +918,12 @@ class ChatService:
                         "note": "Dry run: the transcription is not started."}
             if not lyrics_job.available(self.root):
                 return {"state": "idle", "running": False, "available": False,
-                        "error": "This library has no "
-                                 "scripts/transcribe_lyrics.py."}
+                        "error": "No local transcriber is "
+                                 "available here."}
             if not lyrics_job.backend_info(self.root).get("ready"):
                 return {"state": "idle", "running": False, "available": False,
                         "error": "No local transcriber is installed — run "
-                                 "scripts/setup_asr.sh first."}
+                                 "setup_asr.sh first."}
             try:
                 job = lyrics_job.start(self.root, rel=str(rel or ""),
                                        refresh=bool(refresh),
@@ -1363,8 +1363,8 @@ class ChatService:
             if not lyrics_job.available(self.root):
                 return {"state": "idle", "running": False, "active": False,
                         "available": False,
-                        "error": "This library has no "
-                                 "scripts/transcribe_lyrics.py."}
+                        "error": "No local transcriber is "
+                                 "available here."}
             status = lyrics_job.status(self.root)
             if status.get("active"):
                 return status

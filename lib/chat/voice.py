@@ -135,7 +135,7 @@ def status(root: Path) -> dict:
         "timeout": TIMEOUT,
         "types": sorted(set(TYPES)),
         "note": "" if python else "no local transcriber is installed "
-                                  "(scripts/setup_asr.sh)",
+                                  "(setup_asr.sh)",
     }
 
 
@@ -182,12 +182,12 @@ def transcribe(root: Path, data: bytes, *, content_type: str = "",
                          f"at most {MAX_BYTES} are accepted"}
     if not available(root):
         return {"ok": False,
-                "error": "this library has no scripts/transcribe_lyrics.py, so "
-                         "voice input is not possible"}
+                "error": "no local transcriber is available, so voice input is "
+                         "not possible"}
     python = lyrics_job.interpreter(root)
     if not python:
         return {"ok": False, "error": "no local transcriber is installed — run "
-                                      "scripts/setup_asr.sh (or rebuild the "
+                                      "setup_asr.sh (or rebuild the "
                                       "container with the ASR packages)"}
 
     suffix = suffix if suffix in SUFFIXES else suffix_for(content_type)

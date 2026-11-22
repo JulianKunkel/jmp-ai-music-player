@@ -3916,7 +3916,8 @@ class Engine:
                     "No song has lyrics yet — nothing to search.\n\n"
                     + self._lyrics_backend_hint(), tool="lyrics · search")
             return Reply(
-                f"No lyric line matches “{_escape(words)}”.  "
+                f"No lyric line sings “{_escape(words)}”.  Words are matched "
+                "whole, so “sea” does not match “seaside”.  "
                 f"{summary['tracks']:,} of the library's songs are transcribed "
                 "so far, so the line may simply not be covered yet.", tool="lyrics · search")
 
@@ -3939,12 +3940,18 @@ class Engine:
             header += " · " + " + ".join(concept_labels(terms))
         header += f" · {len(tracks)} song{'s' if len(tracks) != 1 else ''}"
         lines = [header, ""]
+        if any(hit.get("fuzzy") for hit in ordered):
+            lines += ["_No exact word matched; the closest stored words are "
+                      "shown._", ""]
         for number, hit in enumerate(ordered, 1):
             title = hit.get("title") or Path(hit["rel"]).stem
             artist = hit.get("artist") or ""
             line_bits = [lyric_clock(hit.get("start") or 0)]
             if hit.get("sound") is not None:
                 line_bits.append(f"sound {hit['sound']:.2f}")
+            mentions = int(hit.get("mentions") or 1)
+            if mentions > 1:
+                line_bits.append(f"×{mentions}")
             lines.append(f"{number}. **{_escape(artist + ' — ' if artist else '')}"
                          f"{_escape(title)}**  ·  " + "  ·  ".join(line_bits))
             lines.append(f"   _“{_escape(hit.get('line') or '')}”_")
@@ -4098,17 +4105,17 @@ class Engine:
     def _lyrics_setup(self, args: dict) -> Reply:
         if self.dry_run:
             return Reply("Dry run: would install the local transcriber with "
-                         "`scripts/setup_asr.sh`.", tool="lyrics · setup")
+                         "the shipped `setup_asr.sh`.", tool="lyrics · setup")
         try:
             lyrics_job.start_setup(self.root, cpu=bool(args.get("cpu")))
         except (OSError, RuntimeError) as exc:
             return Reply(f"The setup could not start: {exc}", error=True)
         return Reply(
             "## Installing the local transcriber\n\n"
-            "Running `scripts/setup_asr.sh` in the background — it creates "
-            "`scripts/asr-venv` with faster-whisper (about 450 MB, one time) "
-            "and uses the GPU when the driver offers one.  Nothing leaves this "
-            "machine.  Ask “how is the transcription going” for the progress.",
+            "Running the shipped `setup_asr.sh` in the background — it creates "
+            "a venv with faster-whisper (about 450 MB, one time) and uses the "
+            "GPU when the driver offers one.  Nothing leaves this machine.  "
+            "Ask “how is the transcription going” for the progress.",
             tool="lyrics · setup")
 
     def _lyrics_status_markdown(self) -> str:
@@ -4152,9 +4159,9 @@ class Engine:
             return (f"A local transcriber is ready "
                     f"({info.get('gpu') == 'yes' and 'GPU' or 'CPU'}).")
         if info.get("setup_available"):
-            return ("The local transcriber is not installed yet — run "
-                    "`scripts/setup_asr.sh`, or ask me to “set up the "
-                    "transcriber”.")
+            return ("The local transcriber is not installed yet — ask me to "
+                    "“set up the transcriber”, or run the shipped "
+                    "`setup_asr.sh`.")
         return ("This library has no transcription tool "
                 "(`scripts/transcribe_lyrics.py`).")
 

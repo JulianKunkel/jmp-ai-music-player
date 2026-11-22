@@ -1,0 +1,32 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: jmp-ai-music-player
+Upstream-Contact: Julian M. Kunkel <julian.kunkel@gwdg.de>
+Source: https://github.com/JulianKunkel/jmp-ai-music-player
+
+Files: *
+Copyright: 2026 Julian M. Kunkel <julian.kunkel@gwdg.de>
+License: GPL-3+
+ This program is free software: you can redistribute it and/or modify it
+ under the terms of the GNU General Public License as published by the Free
+ Software Foundation, either version 3 of the License, or (at your option)
+ any later version.
+ .
+ This program is distributed in the hope that it will be useful, but
+ WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General
+ Public License for more details.
+ .
+ On Debian systems the full text of the GNU General Public License version 3
+ is also available in /usr/share/common-licenses/GPL-3.
+
+Files: docs/logo-jmp.svg docs/logo-jmp.png julians-music-app.svg
+Copyright: 2026 Julian M. Kunkel <julian.kunkel@gwdg.de>
+License: GPL-3+
+ Hand-drawn SVG mascot and launcher icon, released under the same licence.
+
+Comment:
+ Substantial parts of this project were written with a large language model
+ used as a coding agent; the human author directed, reviewed and is
+ answerable for the result.  See NOTICE and docs/licences.md in the package
+ documentation.  The music library itself is the user's data and is not part
+ of this package.

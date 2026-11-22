@@ -6,10 +6,10 @@ triggers: lyrics, lyric, songtext, songtexte, liedtext, gesangstext, textzeile, 
 ---
 # Lyrics
 
-The words come from a **local** transcription: `scripts/transcribe_lyrics.py`
-runs faster-whisper on this machine (GPU when the driver offers one, otherwise
-CPU) and stores timed lines in `library-work/app/lyrics/lyrics.db` (SQLite,
-FTS5 index).  No audio and no text leaves the machine, and nothing is sent to a
+The words come from a **local** transcription: `lib/asr/transcribe_lyrics.py`
+(the repository also keeps it in `scripts/`) runs faster-whisper on this
+machine (GPU when the driver offers one, otherwise CPU) and stores timed lines
+in `library-work/app/lyrics/lyrics.db` (SQLite, FTS5 index).  No audio and no text leaves the machine, and nothing is sent to a
 lyrics website.
 
 ## What the skill answers
@@ -24,10 +24,14 @@ lyrics website.
   following line for "what's the next line", "was kommt als Nächstes".
   "sing along" is a show of the current song.  Without playback it says so and
   starts at the beginning instead of inventing a position.
-- **search** — a rough line, a word, or a fragment ("find songs about a boat",
-  "which song mentions pizza").  FTS5 matches stems, so `sail` finds `sailing`;
-  the answer quotes the matched line with its timestamp.  The hits become the
-  current result list, so "play number 1" works.
+- **search** — a word or a short phrase ("find songs about a boat", "which
+  song mentions pizza").  Matching is by **whole word** plus its plural
+  (`sea` → `sea`, `seas`; never `seaside` or `search`), songs that return to
+  the word rank first (the reply shows `×N`) and a title mention counts as a
+  theme; only when nothing matches exactly does a spelling fallback find the
+  closest word and say so.  The answer quotes the matched line with its
+  timestamp.  The hits become the current result list, so "play number 1"
+  works.
 - **search + sound property** — the same sentence may name a measured property:
   "something with a boat and fast" searches the lyrics for *boat* and orders
   those hits by the Speed axis (and any other property: slow, aggressive,
@@ -44,9 +48,10 @@ lyrics website.
 
 ## Requirements
 
-A local transcriber: `scripts/setup_asr.sh` creates `scripts/asr-venv` with
-`faster-whisper` (about 450 MB, one time) and picks the model — `medium` on a
-CUDA GPU, `small` on CPU.  The container ships its own copy of the backend
+A local transcriber: `setup_asr.sh` (shipped as `lib/asr/setup_asr.sh`)
+creates `library-work/app/lyrics/asr-venv` — or `scripts/asr-venv` when the
+library's own scripts folder is used — with `faster-whisper` (about 450 MB,
+one time) and picks the model — `medium` on a CUDA GPU, `small` on CPU.  The container ships its own copy of the backend
 (CPU only, because Docker here has no nvidia runtime).  Models download on
 first use into `library-work/app/lyrics/models`, so they live in the library
 and survive a rebuild.

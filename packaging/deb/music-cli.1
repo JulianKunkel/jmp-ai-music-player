@@ -1,0 +1,130 @@
+.TH MUSIC-CLI 1 "2026-11-22" "JulAIn Music Player 1.0.0" "User Commands"
+.SH NAME
+music-cli \- JulAIn Music Player: chat with your local music library
+.SH SYNOPSIS
+.B music-cli
+.I command
+.RI [ options ]
+.RI [ arguments ]
+.br
+.B music-cli
+.B chat
+.RB [ \-\-web ]
+.RB [ \-\-no\-llm ]
+.RI [ "one sentence" ]
+.SH DESCRIPTION
+.B music-cli
+is the command line and window front end of JulAIn Music Player (JMP).
+It indexes a music folder you already own, plays it through
+.BR mpv (1),
+and turns English or German sentences into journalled actions: playback,
+playlists, mood and sound rankings, lyrics, library statistics and settings.
+.PP
+The player never deletes audio and never moves a file without writing a
+journal entry first.  Music only enters through a local
+.B add
+or, in a build that includes an optional download module, through that
+module.
+.PP
+Run
+.B music-cli chat --web
+to open the window, or
+.B music-cli chat
+for the terminal interface.  The first run needs a library: a folder with
+.BR Playlists/ " and either " Artists/ " or " library-work/ .
+Point the launcher at it with the
+.B MUSIC_LIBRARY
+environment variable or
+.IR ~/.config/jmp/library .
+.SH COMMANDS
+.TP
+.B play \fIpath|playlist|search\fR
+Play a file, a playlist name or the best search hit.
+Options: \fB\-\-append\fR, \fB\-\-shuffle\fR, \fB\-\-first\fR.
+.TP
+.B pause, resume, toggle, stop, next, prev
+Transport controls for the running mpv daemon.
+.TP
+.BI seek " [+|\-]SECONDS"
+Seek relative to the playhead.
+.TP
+.BI vol " PERCENT"
+Set the volume.
+.TP
+.B status
+Print what is playing.
+.TP
+.BI search " WORDS"
+Search artist, title, album, genre, grouping and path.
+.TP
+.BI pl " list|show|new|add|remove|delete|check"
+Inspect and edit playlists.  Writes are journalled.
+.TP
+.BI mood " [plan|build|list|play NAME]"
+Build and play the measured mood lists.
+.TP
+.B index
+Scan the library, rebuild the reports and the generated playlists.
+.TP
+.BI data " status|fingerprint|export|import|backup"
+The daily plain-text library backup and its import.
+.TP
+.BI chat " [message]"
+The conversational front end.  \fB\-\-web\fR opens the window, \fB\-\-plain\fR
+the line interface, \fB\-\-no\-llm\fR forces the offline parser and
+\fB\-\-dry\-run\fR only plans.
+.TP
+.B verify
+Check that the playlists still resolve and that the library is intact.
+.TP
+.B shell
+Open a shell in the library folder.
+.SH ENVIRONMENT
+.TP
+.B MUSIC_LIBRARY
+The library folder.  Overrides the discovery and the config files.
+.TP
+.B MPV_SOCKET
+The mpv JSON IPC socket.  The launcher defaults to
+.IR /tmp/mpv\-UID.sock .
+.TP
+.B MUSIC_LLM_CONFIG
+An optional planner configuration file (server, model, key); usually set in
+the window under Settings.
+.SH FILES
+.TP
+.I ~/.config/jmp/library
+One line: the music folder to use.
+.TP
+.I /etc/jmp/library
+The same, system-wide (a user setting wins).
+.TP
+.I /usr/lib/jmp
+The installed application and its documentation.
+.TP
+.I LIBRARY/library-work
+The inventory, journals and caches of a prepared library.
+.TP
+.I LIBRARY/Playlists
+The canonical \fB.m3u8\fR playlists.
+.SH EXAMPLES
+.PP
+.nf
+music-cli chat --web
+music-cli play Bands
+music-cli chat "songs about the sea that are calm"
+music-cli search "die ärzte"
+.fi
+.SH SEE ALSO
+.BR mpv (1),
+.BR ffmpeg (1)
+.PP
+The full manual, the architecture page and the licence audit are installed
+under
+.IR /usr/share/doc/jmp-ai-music-player/ .
+.SH AUTHOR
+Julian M. Kunkel.
+.PP
+This program is free software under the GNU General Public License,
+version 3 or later.  It was written in pair programming with an AI coding
+agent; see the NOTICE file for the details.

@@ -10,10 +10,12 @@ with one `track` row per song (model, language, source size/mtime) and one
 module only reads that database: the app never transcribes in-process and
 never touches an audio file.
 
-The rough search is deliberately forgiving: every word must appear when
-possible, otherwise any word, otherwise a substring of the first word.  Typing
-"boat" finds "Boot" no, but "boats" and "boating" yes (prefix match), and a
-typo falls back to a substring scan of the stored lines.
+The search matches **whole words** and their plain plural forms: "boat" finds
+"boat" and "boats", "sea" finds "sea" and "seas" — it does not reach
+"steamboat", "seaside" or "search".  Every requested word must appear when
+possible, otherwise any of them; songs that return to the word rank first.
+Only when nothing matches exactly does a spelling fallback compare the stored
+words and flag its hits as fuzzy.
 
 A timing shift the listener sets is *app state*
 (`library-work/app/lyrics/offsets.json`), not a database edit: `lines()`
@@ -122,9 +124,80 @@ def query_tokens(text: str) -> list[str]:
     return tokens
 
 
+def word_forms(token: str) -> list[str]:
+    """A word and its plain inflections — never another word it is part of.
+
+    "sea" finds "sea" and "seas", but not "seaside" or "search"; "boat" finds
+    "boats" without reaching "steamboat".  Songs about the sea should not be
+    songs that merely contain the three letters.
+    """
+    token = str(token or "").casefold()
+    if not token:
+        return []
+    forms = [token]
+    if token.endswith("ies") and len(token) > 4:
+        forms.append(token[:-3] + "y")
+    elif token.endswith("es") and len(token) > 3:
+        forms += [token[:-2], token[:-1]]
+    elif token.endswith("s") and len(token) > 3:
+        forms.append(token[:-1])
+    if token.endswith(("s", "x", "z", "ch", "sh")):
+        forms.append(token + "es")
+    elif token.endswith("y") and len(token) > 2:
+        forms.append(token[:-1] + "ies")
+    else:
+        forms.append(token + "s")
+    out: list[str] = []
+    for form in forms:
+        if form and form not in out:
+            out.append(form)
+    return out
+
+
 def _fts_query(tokens: list[str], mode: str) -> str:
+    """An exact word query: each token matches only its own forms."""
     joiner = " AND " if mode == "and" else " OR "
-    return joiner.join(f'"{token}"*' for token in tokens)
+    groups = []
+    for token in tokens:
+        forms = " OR ".join(f'"{form}"' for form in word_forms(token))
+        groups.append(f"({forms})")
+    return joiner.join(groups)
+
+
+def _word_in(token: str, text: str) -> bool:
+    """Whether one of the token's forms stands in the text as a whole word."""
+    folded = str(text or "").casefold()
+    return any(re.search(r"(?<!\w)" + re.escape(form) + r"(?!\w)", folded)
+               for form in word_forms(token))
+
+
+def _fuzzy_scan(conn: sqlite3.Connection, tokens: list[str]) -> list[sqlite3.Row]:
+    """A misspelling fallback: the closest whole word, never a substring.
+
+    Only words of the stored lines are compared, and only after an exact
+    search found nothing, so "piza" can still reach "pizza" while "sea" never
+    reaches "seaside".
+    """
+    from difflib import SequenceMatcher
+
+    wanted = tokens[0]
+    if len(wanted) < 3:
+        return []
+    rows = conn.execute(
+        "SELECT l.rel_path, l.idx, l.start_s, l.end_s, l.text, 0 AS score, "
+        "t.title, t.artist, t.album, t.duration_s "
+        "FROM line l LEFT JOIN track t ON t.rel_path = l.rel_path "
+        "LIMIT 20000").fetchall()
+    found: list[sqlite3.Row] = []
+    for row in rows:
+        for word in re.findall(r"[0-9A-Za-zÄÖÜäöüß']+", str(row["text"] or "")):
+            word = word.strip("'").casefold()
+            if not word or word in STOPWORDS:
+                continue
+            if SequenceMatcher(None, wanted, word).ratio() >= 0.84:
+                found.append(row)
+                break
+    return found
 
 
 class Lyrics:
@@ -296,6 +369,13 @@ class Lyrics:
 
     def search(self, text: str, limit: int = 40, mode: str = "and"
                ) -> list[dict]:
+        """Songs whose sung *words* match, the ones that keep saying it first.
+
+        Matching is by whole word (with the plain plural forms), never by a
+        prefix or substring: "sea" does not reach "seaside" or "search".
+        Only when nothing matches exactly does a spelling fallback look for
+        the closest stored word and flag the hits as ``fuzzy``.
+        """
         tokens = query_tokens(text)
         if not tokens:
             return []
@@ -303,6 +383,7 @@ class Lyrics:
         if conn is None:
             return []
         rows: list[dict] = []
+        fuzzy = False
         try:
             for attempt in (mode, "or"):
                 try:
@@ -313,19 +394,17 @@ class Lyrics:
                         "FROM line_fts f "
                         "LEFT JOIN track t ON t.rel_path = f.rel_path "
                         "WHERE line_fts MATCH ? ORDER BY score LIMIT ?",
-                        (_fts_query(tokens, attempt), int(limit))).fetchall()
+                        (_fts_query(tokens, attempt),
+                         max(int(limit) * 8, 160))).fetchall()
                 except sqlite3.OperationalError:
                     found = []
                 rows = [self._hit(row, tokens) for row in found]
                 if rows:
                     break
             if not rows:
-                rows = [self._hit(row, tokens) for row in conn.execute(
-                    "SELECT l.rel_path, l.idx, l.start_s, l.end_s, l.text, "
-                    "0 AS score, t.title, t.artist, t.album, t.duration_s "
-                    "FROM line l LEFT JOIN track t ON t.rel_path = l.rel_path "
-                    "WHERE l.text LIKE ? ORDER BY l.rel_path, l.idx LIMIT ?",
-                    (f"%{tokens[0]}%", int(limit))).fetchall()]
+                found = _fuzzy_scan(conn, tokens)
+                rows = [self._hit(row, tokens) for row in found]
+                fuzzy = bool(rows)
         except sqlite3.Error:
             return []
         finally:
@@ -338,7 +417,18 @@ class Lyrics:
                 best[hit["rel"]] = hit
             else:
                 best[hit["rel"]]["also"] += 1
-        return sorted(best.values(), key=lambda hit: hit["score"])
+        for hit in best.values():
+            hit["mentions"] = 1 + int(hit.get("also") or 0)
+            hit["fuzzy"] = fuzzy
+            # one passing line is a mention, not a theme: a song really sings
+            # about the word when it comes back to it or names the song with it
+            hit["about"] = bool(hit["mentions"] > 1 or any(
+                _word_in(token, hit.get("title") or "") for token in tokens))
+        # a song that returns to the word is more "about" it than one that
+        # drops it once; the text match ranks inside that
+        ordered = sorted(best.values(),
+                         key=lambda hit: (-hit["mentions"], hit["score"]))
+        return ordered[:max(1, int(limit))]
 
     def _hit(self, row: sqlite3.Row, tokens: list[str]) -> dict:
         text = row["text"]
@@ -353,9 +443,11 @@ class Lyrics:
             "artist": row["artist"] or "",
             "album": row["album"] or "",
             "duration": float(row["duration_s"] or 0),
-            "matched": [token for token in tokens
-                        if token in (text or "").casefold()],
+            "matched": [token for token in tokens if _word_in(token, text)],
             "also": 0,
+            "mentions": 1,
+            "fuzzy": False,
+            "about": False,
         }
 
     # -- the chat's combined search ---------------------------------------
@@ -375,6 +467,9 @@ class Lyrics:
                 "end": hit["end"],
                 "matched": hit["matched"],
                 "also": hit["also"],
+                "mentions": hit.get("mentions", 1),
+                "about": bool(hit.get("about")),
+                "fuzzy": bool(hit.get("fuzzy")),
                 "duration": hit["duration"],
             })
         return out
@@ -423,19 +518,25 @@ def combine(hits: list[dict], ranking: list[dict] | None,
     search and "a song about a boat and fast" becomes a text search narrowed by
     the measured axes.
     """
+    def order(rows: list[dict]) -> list[dict]:
+        """Songs that really sing the word first, then the passing mentions.
+
+        Inside each group the requested sound wins; a song with no measurement
+        follows the measured ones instead of being dropped.
+        """
+        return sorted(rows, key=lambda hit: (
+            0 if hit.get("about") else 1,
+            -int(hit.get("mentions") or 1),
+            0 if hit.get("sound") is not None else 1,
+            -(hit.get("sound") or 0.0)))
+
     if not ranking:
-        return hits[:max(1, int(limit))]
+        return order([dict(hit) for hit in hits])[:max(1, int(limit))]
     scores = {row["rel"]: float(row["score"]) for row in ranking}
-    ranked: list[dict] = []
-    rest: list[dict] = []
+    entries: list[dict] = []
     for hit in hits:
         entry = dict(hit)
         if hit["rel"] in scores:
             entry["sound"] = round(scores[hit["rel"]], 4)
-            ranked.append(entry)
-        else:
-            rest.append(entry)
-    # the ranking already encodes the requested properties, so lyric hits that
-    # also fit it come first; songs with no measurement keep their lyric order
-    ranked.sort(key=lambda hit: -hit["sound"])
-    return (ranked + rest)[:max(1, int(limit))]
+        entries.append(entry)
+    return order(entries)[:max(1, int(limit))]

@@ -24,3 +24,7 @@ download-modules/
 lib/modules/
 .build-modules/*
 !.build-modules/.keep
+
+# Debian package build output (dist/*.deb is uploaded as a release asset)
+build/
+dist/

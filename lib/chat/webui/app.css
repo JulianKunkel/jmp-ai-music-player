@@ -418,6 +418,9 @@ kbd {
   color: var(--muted);
 }
 .lyrics-meta { font: 10px var(--mono); color: var(--faint); }
+/* the meta line sits under the controls: the sidebar is too narrow for both */
+.lyrics-panel .lyrics-meta { padding: 0 7px 6px; }
+.lyrics-panel .lyrics-meta:empty { display: none; }
 /* the timing nudge: a text button, because an arrow would read as a transport */
 .lyrics-nudge {
   height: 20px; padding: 0 6px;

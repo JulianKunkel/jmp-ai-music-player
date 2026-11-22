@@ -2,9 +2,10 @@
 """One command for everything in the music library.
 
 This is the user-facing front end: it plays the library, searches it, edits
-playlists, imports downloads and new files, and rebuilds the mood lists.  It
-works on the host and inside the container — both only need the repository
-mounted and an mpv binary.
+playlists, adds new files and rebuilds the mood lists.  It works on the host
+and inside the container — both only need the repository mounted and an mpv
+binary.  A build with an optional download module also reaches that module's
+queue; the open player has no download feature.
 
     music-cli play Artists/Die_Ärzte/.../01_Song.mp3
     music play Bands                     # a playlist by name

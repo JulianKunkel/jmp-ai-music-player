@@ -16,8 +16,8 @@ job keeps its record, so a page reload (or a restarted app) still shows the
 result.
 
 The interpreter matters: a CUDA-capable `scripts/asr-venv` (created by
-`scripts/setup_asr.sh`) transcribes a song in seconds, the app's own venv in
-the container uses the CPU and takes about a minute.  :func:`interpreter`
+`setup_asr.sh`, which ships in `lib/asr/`) transcribes a song in seconds, the
+app's own venv in the container uses the CPU and takes about a minute.  :func:`interpreter`
 probes both once and picks the first that can import `faster_whisper`.
 """
 
@@ -58,9 +58,15 @@ def models_path(root: Path) -> Path:
     return Path(root) / "library-work" / "app" / "lyrics" / "models"
 
 
+#: The transcriber and its setup script ship with the app itself, so a build
+#: without the library's per-folder toolkit still has local lyrics.
+BUNDLED = Path(__file__).resolve().parent.parent / "asr"
+
+
 def scripts(root: Path) -> Path:
+    """Where the transcriber lives: the library's tools first, else the app's."""
     root = Path(root)
-    for candidate in (root / "scripts", root.parent / "scripts"):
+    for candidate in (root / "scripts", root.parent / "scripts", BUNDLED):
         if (candidate / SCRIPT).is_file():
             return candidate
     return root / "scripts"
@@ -71,7 +77,16 @@ def available(root: Path) -> bool:
 
 
 def setup_available(root: Path) -> bool:
-    return (scripts(root) / SETUP).is_file()
+    return setup_script(root).is_file()
+
+
+def setup_script(root: Path) -> Path:
+    """Where the setup script lives; it may not sit next to the transcriber."""
+    root = Path(root)
+    for candidate in (root / "scripts", root.parent / "scripts", BUNDLED):
+        if (candidate / SETUP).is_file():
+            return candidate / SETUP
+    return root / "scripts" / SETUP
 
 
 def _now() -> str:
@@ -93,7 +108,7 @@ def interpreter(root: Path) -> str:
     """The python that can run the transcriber here ("" when there is none).
 
     Order of preference: an explicit `MUSIC_ASR_PYTHON`, the host ASR venv
-    (`scripts/setup_asr.sh`, usually CUDA), and finally the app's own
+    (created by `setup_asr.sh`, usually CUDA), and finally the app's own
     interpreter — which is what carries the backend inside the container.
     """
     root = Path(root)
@@ -105,6 +120,9 @@ def interpreter(root: Path) -> str:
     if explicit:
         candidates.append(explicit)
     candidates.append(str(scripts(root) / "asr-venv" / "bin" / "python"))
+    # the venv the bundled setup script creates inside the library
+    candidates.append(str(Path(root) / "library-work" / "app" / "lyrics"
+                          / "asr-venv" / "bin" / "python"))
     candidates.append(sys.executable)
     for candidate in candidates:
         if not candidate or not Path(candidate).is_file():
@@ -242,14 +260,15 @@ def start(root: Path, *, rel: str = "", refresh: bool = False,
     """Queue one transcription; returns the job record (running or reused)."""
     root = Path(root)
     if not available(root):
-        raise RuntimeError("the library has no scripts/transcribe_lyrics.py")
+        raise RuntimeError("the local transcriber is missing")
     running = _running(root)
     if running:
         return running
     python = interpreter(root)
     if not python:
         raise RuntimeError(
-            "no local transcriber is installed — run scripts/setup_asr.sh")
+            "no local transcriber is installed — install the local "
+            "Whisper backend from the lyrics panel")
 
     steps = _steps(root, rel=rel, refresh=refresh, missing=missing,
                    model=model, language=language)
@@ -288,14 +307,14 @@ def start(root: Path, *, rel: str = "", refresh: bool = False,
 
 
 def start_setup(root: Path, *, model: str = "", cpu: bool = False) -> dict:
-    """Install the local backend (`scripts/setup_asr.sh`) as a background job."""
+    """Install the local backend (`setup_asr.sh`) as a background job."""
     root = Path(root)
     if not setup_available(root):
-        raise RuntimeError("the library has no scripts/setup_asr.sh")
+        raise RuntimeError("the local transcriber setup is missing")
     running = _running(root)
     if running:
         return running
-    script = scripts(root) / SETUP
+    script = setup_script(root)
     bash = shutil.which("bash") or "/bin/bash"
     argv = [bash, str(script)]
     if model:

@@ -428,8 +428,9 @@
           <td>Read-only reader of the measured sound profiles: axes, similar
               tracks, families, explanations, five profile sets.</td></tr>
       <tr><td><code>lib/chat/lyrics.py</code></td>
-          <td>Read-only reader of the lyric database: timed lines, FTS5 search,
-              timing offsets, LRC export.</td></tr>
+          <td>Read-only reader of the lyric database: timed lines, whole-word
+              FTS5 search (plurals yes, substrings no), timing offsets, LRC
+              export.</td></tr>
       <tr><td><code>lib/chat/*_job.py</code></td>
           <td>Background jobs: index, profiles, lyrics, library data. One
               detached child each, pause/resume through <code>/proc</code>,
@@ -443,11 +444,13 @@
     <p>
       The app is the conversation and the player. The heavy library work —
       scanning, tagging, artwork, deduplication, mood features, sound profiles,
-      lyric transcription, the daily backup — lives in the repository's
-      <code>scripts/</code> folder and is called as a subprocess or through a
-      small read-only reader. A plain music folder without <code>scripts/</code>
-      can still play, search and use playlists; it cannot tag new files or
-      start a measurement job.
+      the daily backup — lives in the repository's <code>scripts/</code> folder
+      and is called as a subprocess or through a small read-only reader. A
+      plain music folder without <code>scripts/</code> can still play, search,
+      use playlists and transcribe lyrics: the local Whisper transcriber ships
+      with the app in <code>lib/asr/</code> and installs its own backend into
+      the library. Tagging new files or re-measuring the library still needs
+      the library's tools.
     </p>
 
     <h3>External programs</h3>

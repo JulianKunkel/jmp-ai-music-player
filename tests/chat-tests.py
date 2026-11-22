@@ -5230,10 +5230,86 @@ def main() -> int:
         check("the combined hit carries its sound score",
               "sound 0." in text, text[:400])
 
+        check("a word the song keeps saying is counted",
+              "×2" in text and "boat" in text.casefold(), text[:400])
+
         reply = engine.handle("which song mentions pizza")
         check("an unmatched word is reported, not invented",
-              "no lyric line matches" in clean_text(reply).casefold(),
+              "no lyric line" in clean_text(reply).casefold(),
               clean_text(reply)[:200])
+
+        # -- whole words, not substrings -----------------------------------
+        # "sea" must not reach "seaside"/"search", the plural still counts, a
+        # song that returns to the word wins and a typo is flagged.
+        import sqlite3 as _sqlite3
+        word_root = Path(tempfile.mkdtemp(prefix="lyric-words-"))
+        wfolder = word_root / "library-work" / "app" / "lyrics"
+        wfolder.mkdir(parents=True)
+        wconn = _sqlite3.connect(wfolder / "lyrics.db")
+        wconn.executescript("""
+            CREATE TABLE track (rel_path TEXT PRIMARY KEY, title TEXT,
+                artist TEXT, album TEXT, duration_s REAL, language TEXT,
+                model TEXT, backend TEXT, source_size INTEGER,
+                source_mtime TEXT, transcribed_at TEXT,
+                line_count INTEGER DEFAULT 0, text TEXT);
+            CREATE TABLE line (rel_path TEXT NOT NULL, idx INTEGER NOT NULL,
+                start_s REAL, end_s REAL, text TEXT NOT NULL,
+                PRIMARY KEY (rel_path, idx));
+            CREATE VIRTUAL TABLE line_fts USING fts5(
+                text, rel_path UNINDEXED, idx UNINDEXED, start_s UNINDEXED,
+                end_s UNINDEXED);
+        """)
+        word_tracks = {
+            "Artists/Aqua/Sea/01_We_Belong_to_the_Sea.mp3": (
+                "We Belong to the Sea", "Aqua",
+                ["We belong to the sea", "to the waves, you and me",
+                 "We belong to the sea of blue"]),
+            "Artists/Passing/Else/01_Else.mp3": (
+                "Elsewhere", "Passing",
+                ["Passing through the seaside", "I go searching for a sign"]),
+            "Artists/Pizza/Pizza/01_Pizza.mp3": (
+                "Pizza", "Pizza", ["Sie sah aus wie ein Stück Pizza"]),
+        }
+        for rel, (title, artist, lines) in word_tracks.items():
+            wconn.execute(
+                "INSERT INTO track(rel_path, title, artist, album, duration_s,"
+                " line_count, text) VALUES(?,?,?,?,?,?,?)",
+                (rel, title, artist, "Album", 60.0, len(lines), " ".join(lines)))
+            for idx, text_line in enumerate(lines):
+                wconn.execute("INSERT INTO line VALUES(?,?,?,?,?)",
+                              (rel, idx, idx * 5.0, idx * 5.0 + 4.0, text_line))
+                wconn.execute("INSERT INTO line_fts VALUES(?,?,?,?,?)",
+                              (text_line, rel, idx, idx * 5.0,
+                               idx * 5.0 + 4.0))
+        wconn.commit()
+        wconn.close()
+        exact = lyrics_mod.Lyrics(word_root)
+        sea_hits = exact.find("sea", limit=6)
+        check("a lyric search matches whole words only",
+              [hit["rel"] for hit in sea_hits]
+              == ["Artists/Aqua/Sea/01_We_Belong_to_the_Sea.mp3"],
+              str([hit["rel"] for hit in sea_hits]))
+        check("the song that keeps saying it is the theme",
+              sea_hits and sea_hits[0]["about"] is True
+              and sea_hits[0]["mentions"] == 2, str(sea_hits)[:300])
+        check("a plural search finds the singular too",
+              [hit["rel"] for hit in exact.find("seas", limit=6)]
+              == ["Artists/Aqua/Sea/01_We_Belong_to_the_Sea.mp3"],
+              str([hit["rel"] for hit in exact.find("seas", limit=6)]))
+        check("a substring is a different word",
+              exact.find("sea", limit=6)
+              and not any("Passing" in hit["rel"] for hit in sea_hits),
+              str([hit["rel"] for hit in sea_hits]))
+        fuzzy_hits = exact.find("piza", limit=4)
+        check("a misspelling is offered as a fuzzy hit, never a substring",
+              fuzzy_hits and fuzzy_hits[0]["fuzzy"] is True
+              and "Pizza" in fuzzy_hits[0]["rel"], str(fuzzy_hits)[:300])
+        check("word forms stop at the word",
+              lyrics_mod.word_forms("sea") == ["sea", "seas"]
+              and "seaside" not in lyrics_mod.word_forms("sea")
+              and lyrics_mod.word_forms("boat") == ["boat", "boats"],
+              str(lyrics_mod.word_forms("sea")))
+        shutil.rmtree(word_root, ignore_errors=True)
 
         # "how many songs do I have" shares the word *have* with "songs that
         # have a boat", but it counts the library: it must not search the

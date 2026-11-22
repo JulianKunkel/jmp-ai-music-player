@@ -1,0 +1,22 @@
+#!/bin/sh
+# jmp-ai-music-player: drop the byte-code caches and refresh the desktop cache.
+set -e
+
+APP_HOME=/usr/lib/jmp
+
+case "${1:-}" in
+    remove|purge)
+        rm -rf "$APP_HOME"/lib/__pycache__ "$APP_HOME"/lib/chat/__pycache__ \
+               "$APP_HOME"/lib/chat/webui/__pycache__ \
+               "$APP_HOME"/lib/skills/__pycache__ 2>/dev/null || true
+        find "$APP_HOME/lib" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
+        if command -v update-desktop-database >/dev/null 2>&1; then
+            update-desktop-database -q /usr/share/applications >/dev/null 2>&1 || true
+        fi
+        if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+            gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor >/dev/null 2>&1 || true
+        fi
+        ;;
+esac
+
+exit 0
