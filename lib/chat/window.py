@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 import threading
 from urllib.parse import parse_qs, quote, urlparse
@@ -105,6 +106,110 @@ MEDIA_KEYS = {
     "XF86AudioPrev": "prev",
     "XF86AudioMedia": "toggle",
 }
+
+#: Keysym names a keysym-less keyboard sends when its media row is in
+#: "function key" mode instead of "multimedia" mode: the keys are printed with
+#: the media symbols but arrive as plain F5–F8 (or F13–F16).  They are mapped
+#: to the same actions only while no modifier is held, so Ctrl+F5 and friends
+#: stay what they were.
+FKEY_MEDIA = {
+    "F5": "toggle",
+    "F6": "stop",
+    "F7": "prev",
+    "F8": "next",
+    "F13": "toggle",
+    "F14": "stop",
+    "F15": "prev",
+    "F16": "next",
+}
+
+#: set JMP_KEYLOG=/path/to/file to append every key the window and the page
+#: receive, which is how an unlabelled media row is identified.  Without it only
+#: a media key is written: that is what makes a later "the keys do nothing"
+#: report diagnosable from the log, and it can never contain typing.
+KEYLOG_PATH = os.environ.get("JMP_KEYLOG", "")
+#: the always-on log (media keys only), kept small on purpose
+KEYLOG_FILE = os.path.join(
+    os.environ.get("XDG_CACHE_HOME") or
+    os.path.join(os.path.expanduser("~"), ".cache"),
+    APP_ID, "media-keys.log")
+KEYLOG_MAX = 64 * 1024
+
+
+def _media_name(name: str) -> bool:
+    """True for a key a media row can send (never an ordinary character key)."""
+    if not name:
+        return False
+    return (name in MEDIA_KEYS or name in FKEY_MEDIA or
+            name.startswith(("XF86", "Media", "Audio")))
+
+
+def _keylog(tag, name, *rest) -> None:
+    """Append one line: who saw it, the key name, then the raw details."""
+    if not KEYLOG_PATH and not _media_name(str(name)):
+        return
+    path = KEYLOG_PATH or KEYLOG_FILE
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        try:
+            if os.path.getsize(path) > KEYLOG_MAX:
+                with open(path, "rb") as fh:
+                    kept = fh.read()[-KEYLOG_MAX // 2:]
+                with open(path, "wb") as fh:
+                    fh.write(kept)
+        except OSError:
+            pass
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write("\t".join(str(p) for p in (tag, name) + rest) + "\n")
+    except Exception:
+        pass
+
+
+def _modifier_mask(Gdk) -> int:
+    """Every "a modifier is held" bit this GTK generation offers.
+
+    GTK3 has ``META_MASK``, GTK4 dropped it for ``SUPER_MASK``; asking for a
+    missing name would raise inside a key handler and eat the key, so the list
+    is probed instead of assumed.
+    """
+    mask = 0
+    for name in ("SHIFT_MASK", "CONTROL_MASK", "ALT_MASK", "MOD1_MASK",
+                 "SUPER_MASK", "META_MASK", "HYPER_MASK"):
+        mask |= int(getattr(Gdk.ModifierType, name, 0) or 0)
+    return mask
+
+
+def _bridge_keys(view) -> None:
+    """Let the page report which keys it saw, for the same diagnosis.
+
+    WebKitGTK can consume a hardware key before the window's own handler runs.
+    When that happens the page's ``keydown`` is the only witness, so it posts
+    the key name to this message handler and the window logs it next to the
+    keys it saw itself.
+    """
+
+    def _received(_manager, value) -> None:
+        try:
+            text = value.get_js_value().to_string()
+        except Exception:
+            text = str(value)
+        try:
+            name = json.loads(text).get("key", "")
+        except Exception:
+            name = ""
+        _keylog("page", name, text)
+
+    try:
+        manager = view.get_user_content_manager()
+        manager.register_script_message_handler("jmpkeys")
+    except Exception:
+        return
+    for signal in ("script-message-received::jmpkeys",):
+        try:
+            manager.connect(signal, _received)
+        except Exception:
+            pass
+
 
 MPRIS_NAME = "org.mpris.MediaPlayer2.jmp"
 MPRIS_PATH = "/org/mpris/MediaPlayer2"
@@ -211,8 +316,16 @@ class _Media:
                 pass                # a closing server is not a crash
         threading.Thread(target=_send, daemon=True).start()
 
-    def key(self, name: str | None) -> bool:
+    def key(self, name: str | None, plain: bool = True) -> bool:
+        """Run the transport action a keysym means, if it means one.
+
+        ``plain`` is false when a modifier is held: an unmodified F5 may be the
+        media key of a keyboard whose row is in function mode, but Ctrl+F5 is a
+        shortcut and must keep working as one.
+        """
         action = MEDIA_KEYS.get(name or "")
+        if action is None and plain:
+            action = FKEY_MEDIA.get(name or "")
         if not action:
             return False
         self.act(action)
@@ -406,7 +519,12 @@ def _gtk3(url: str) -> None:
     media = _Media(url)
 
     def _key(_widget, event) -> bool:
-        return media.key(Gdk.keyval_name(event.keyval))
+        name = Gdk.keyval_name(event.keyval)
+        plain = not (event.state & _modifier_mask(Gdk))
+        handled = media.key(name, plain)
+        _keylog("gtk3", name, event.keyval, event.hardware_keycode,
+                int(event.state), "handled" if handled else "-")
+        return handled
 
     window.connect("key-press-event", _key)
 
@@ -417,6 +535,7 @@ def _gtk3(url: str) -> None:
     except Exception:
         pass
     _allow_media(view)
+    _bridge_keys(view)
     view.load_uri(url)
     window.add(view)
     window.show_all()
@@ -446,8 +565,13 @@ def _gtk4(url: str) -> None:
     media = _Media(url)
     controller = Gtk.EventControllerKey()
 
-    def _key(_controller, keyval, _keycode, _state) -> bool:
-        return media.key(Gdk.keyval_name(keyval))
+    def _key(_controller, keyval, keycode, state) -> bool:
+        name = Gdk.keyval_name(keyval)
+        plain = not (state & _modifier_mask(Gdk))
+        handled = media.key(name, plain)
+        _keylog("gtk4", name, keyval, keycode, int(state),
+                "handled" if handled else "-")
+        return handled
 
     controller.connect("key-pressed", _key)
     window.add_controller(controller)
@@ -458,6 +582,7 @@ def _gtk4(url: str) -> None:
     except Exception:
         pass
     _allow_media(view)
+    _bridge_keys(view)
     view.load_uri(url)
     window.set_child(view)
     loop = GLib.MainLoop()

@@ -1,3 +1,23 @@
+jmp-ai-music-player (1.1.4-1) unstable; urgency=medium
+
+  * Media keys now really work on a keyboard whose media row is in function
+    mode: an unmodified F5/F6/F7/F8 (and F13-F16) means play/pause, stop,
+    previous, next.  Ctrl+F5 and friends stay ordinary shortcuts.
+  * The MPRIS player outlives the window.  A new host agent
+    (chat/media_keys.py) owns org.mpris.MediaPlayer2.jmp whenever the native
+    window is closed, so the desktop's media keys still reach the player while
+    the music keeps running in the container.  The window takes the name while
+    it is open; the agent takes it back when the window closes and stops itself
+    when the server goes away.
+  * Media-key diagnosis: the window logs every key that could come from a media
+    row to ~/.cache/julians-music-app/media-keys.log.  The log can only hold
+    media and function keys, never typing; JMP_KEYLOG=<file> logs every key for
+    a deliberate one-off.
+  * Nothing new touches a file: every key is the same POST /api/transport call
+    as the matching button, so no tag, playlist or audio byte changes.
+
+ -- Julian M. Kunkel <julian.kunkel@gwdg.de>  Sun, 22 Nov 2026 17:10:00 +0100
+
 jmp-ai-music-player (1.1.3-1) unstable; urgency=medium
 
   * Media keys control the player: play/pause, next, previous and stop.

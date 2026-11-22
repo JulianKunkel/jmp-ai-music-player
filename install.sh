@@ -938,6 +938,15 @@ if [ "\${1:-}" = chat ] && [ "\${2:-}" = --web ] && [ "\$#" -le 2 ]; then
     URL="\$(sed -n 's/.*"url": *"\\([^"]*\\)".*/\\1/p' "\$STATE" 2>/dev/null | head -1)"
     [ -n "\$URL" ] || say_fail "The chat server did not start in the container."
     URL="\${URL/0.0.0.0/127.0.0.1}"
+    # Media keys must outlive the window: this host agent owns the MPRIS
+    # player whenever the window is closed, and the music keeps playing in
+    # the container.  It needs the host python3 with PyGObject.
+    for py in python3 /usr/bin/python3 /usr/local/bin/python3; do
+        command -v "\$py" >/dev/null 2>&1 || continue
+        "\$py" -c "import gi" >/dev/null 2>&1 || continue
+        "\$py" "\$APP_DIR/chat/media_keys.py" --url "\$URL" >/dev/null 2>&1 &
+        break
+    done
     open_host_window "\$URL" || say_fail "No window could be opened — open \$URL by hand."
     exit 0
 fi

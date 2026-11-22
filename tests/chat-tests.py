@@ -2565,6 +2565,76 @@ def check_window() -> None:
           "WebKitGTK" in app_js and "nativeWindow" in app_js,
           "app.js cannot tell the native window")
 
+    # -- a media row that sends F5–F8 --------------------------------------
+    # A keyboard whose media row is in "function key" mode sends plain F5–F8
+    # instead of XF86Audio*, which is why the keys did nothing at all before.
+    check("the unmodified function keys are the media keys of such a row",
+          window_module.FKEY_MEDIA.get("F5") == "toggle"
+          and window_module.FKEY_MEDIA.get("F6") == "stop"
+          and window_module.FKEY_MEDIA.get("F7") == "prev"
+          and window_module.FKEY_MEDIA.get("F8") == "next",
+          str(window_module.FKEY_MEDIA))
+
+    calls = []
+    media = window_module._Media("http://127.0.0.1:1/?t=x")
+    media.act = lambda action, value=None: calls.append(action)
+    check("an unmodified F5 toggles playback", media.key("F5", True) is True
+          and calls == ["toggle"], str(calls))
+    calls.clear()
+    check("a modified F5 stays a shortcut", media.key("F5", False) is False
+          and calls == [], str(calls))
+    check("a real media key works with or without a modifier",
+          media.key("XF86AudioNext", False) is True and calls == ["next"]
+          and media.key("XF86AudioStop", True) is True
+          and calls == ["next", "stop"], str(calls))
+    check("an ordinary key is not a media key",
+          media.key("a", True) is False and media.key("F9", True) is False,
+          str(calls))
+
+    # -- the key log --------------------------------------------------------
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        log = Path(tmp) / "keys.log"
+        window_module.KEYLOG_PATH = ""
+        window_module.KEYLOG_FILE = str(log)
+        window_module._keylog("gtk3", "a", 1)          # typing: never written
+        window_module._keylog("gtk3", "F5", 1)         # a media key: written
+        window_module._keylog("page", "MediaPlayPause", "{}")
+        written = log.read_text(encoding="utf-8")
+        check("the key log keeps media keys and never ordinary typing",
+              "F5" in written and "MediaPlayPause" in written
+              and "\ta\t" not in written, written)
+        check("the key log lives outside the library",
+              "media-keys.log" in window_module.KEYLOG_FILE or
+              window_module.KEYLOG_FILE.endswith("keys.log"),
+              window_module.KEYLOG_FILE)
+
+    # -- the MPRIS agent that outlives the window ---------------------------
+    agent_src = (LIB / "chat" / "media_keys.py").read_text(encoding="utf-8")
+    check("an agent owns the MPRIS player while the window is closed",
+          "window.MPRIS_NAME" in agent_src
+          and "window.MPRIS_PATH" in agent_src
+          and "bus_own_name_on_connection" in agent_src,
+          agent_src[:200])
+    check("the agent yields the name to the window and retries",
+          "YIELD_S" in agent_src and "self.owning = False" in agent_src,
+          "the agent cannot hand the name over")
+    check("the agent stops with the server",
+          "PING_FAILS" in agent_src and "self.quit()" in agent_src,
+          "the agent would outlive a dead server")
+    spec = importlib.util.spec_from_file_location(
+        "jmp_media_keys_under_test", LIB / "chat" / "media_keys.py")
+    agent_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(agent_module)
+    check("one agent per session", hasattr(agent_module, "_running")
+          and hasattr(agent_module, "Agent")
+          and agent_module.STATE.name == "media-keys.json",
+          str(agent_module.STATE))
+    check("the launcher starts the agent next to the window",
+          'chat/media_keys.py" --url' in installer,
+          "the wrapper has no agent line")
+
 
 def check_journey(work: Path) -> None:
     """One realistic window session, from first paint to a saved playlist.
