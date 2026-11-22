@@ -3109,6 +3109,10 @@ def check_window() -> None:
           str(view.scripts[-1:])[:300])
     check("the answer carries the per-key rows",
           '"rows"' in view.scripts[-1], str(view.scripts[-1])[:200])
+    check("the bridge advertises its protocol version",
+          '"bridge": 2' in view.scripts[-1]
+          and '"state_written": true' in view.scripts[-1],
+          str(view.scripts[-1])[:300])
     view.manager.handlers["jmphost"](None, _FakeValue({"id": 8, "op": "probe"}))
     check("the bridge can test whether a press would reach the player",
           bool(view.scripts) and '"cli"' in view.scripts[-1],
@@ -3118,6 +3122,15 @@ def check_window() -> None:
           remembered.get("url") == "http://127.0.0.1:8765/?t=test",
           str(remembered))
     window_module.HOST_STATE_FILE = real_host_state
+
+    media = window_module._Media("http://127.0.0.1:8765/?t=test")
+    media._grab_state = {"available": True, "rows": [
+        {"key": "F7", "path": "/x/custom91/", "installed": True}]}
+    media._grab_checked = time.monotonic()
+    check("a bound key that still reaches the window is a failed grab",
+          media.grab_failed_for("F7") is True
+          and media.grab_failed_for("F9") is False,
+          str(media._grab_state))
 
     page = (LIB / "chat" / "webui" / "app.js").read_text(encoding="utf-8")
     check("the page asks the window for the global-key state",
@@ -3132,6 +3145,15 @@ def check_window() -> None:
     check("Settings can test the route a key press would take",
           'hostCall("probe")' in page and "reaches the player" in page,
           "a broken route could not be diagnosed in the UI")
+    check("the page detects a window older than itself",
+          "older than the page" in page and "result.bridge" in page,
+          "a stale window would keep answering without a probe")
+    check("a key that escaped a global grab is reported",
+          "jmpGrabFailed" in page and "still reached this window" in page,
+          "a failed grab would stay invisible")
+    check("a failed test says why and where the log is",
+          "Test failed:" in page and "result.log" in page,
+          "the user would get no actionable reason")
     check("Settings names a key that GNOME already owns",
           "reserved_by" in page and "already used by" in page,
           "a conflicting shortcut would look installed")

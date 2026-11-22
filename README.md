@@ -498,7 +498,10 @@ is no new Python dependency.
   click (the native window performs the desktop calls, since the server runs
   in a container without a session bus).  One toast at start says the keys are
   focus-only, and the first real key press offers the setup once with the
-  tradeoff in plain words; nothing is installed silently.
+  tradeoff in plain words; nothing is installed silently.  **Test** also says
+  when the running window is older than the page (restart the app), and logs a
+  bound key that still reached the window as *not grabbed* — the desktop then
+  never took the key over.
 - **Profile** opens the sound net diagram of the current song: the twelve
   measured axes as a radar polygon, a slider per axis, the grouped
   measurements (rhythm, loudness, timbre, tonality, bands and space) in a

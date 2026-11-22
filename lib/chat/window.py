@@ -50,6 +50,9 @@ MEDIA_HOST = _sibling("media_keys_host.py")
 
 APP_ID = "julians-music-app"
 APP_TITLE = "JulAIn Music Player"
+#: the page and the window must speak the same host-bridge protocol; a page
+#: from a newer package can otherwise test through a window that has no probe
+BRIDGE_VERSION = 2
 #: the size the window opens with: wide enough for the 940 px settings modal
 #: and tall enough for the eight tabs plus the sticky Save row
 WINDOW_SIZE = (1440, 960)
@@ -208,15 +211,33 @@ HOST_STATE_FILE = os.path.join(
 KEYLOG_MAX = 64 * 1024
 
 
-def _remember_url(url: str) -> None:
+def _remember_url(url: str) -> bool:
     """Leave the loopback URL where a short-lived shortcut can find it."""
     try:
         os.makedirs(os.path.dirname(HOST_STATE_FILE), exist_ok=True)
         with open(HOST_STATE_FILE, "w", encoding="utf-8") as fh:
             json.dump({"url": url, "at": time.time()}, fh)
         os.chmod(HOST_STATE_FILE, 0o600)
+        return True
     except OSError:
-        pass
+        return False
+
+
+def _safe_url(url: str) -> str:
+    """A URL without its query string: ``?t=`` carries the access token."""
+    try:
+        parsed = urlparse(url or "")
+    except ValueError:
+        return ""
+    return parsed.scheme + "://" + parsed.netloc + parsed.path
+
+
+def _server_ok(url: str) -> bool:
+    """Can this window reach the server it is showing right now?"""
+    try:
+        return bool(_Server(url).status())
+    except Exception:
+        return False
 
 
 def _media_name(name: str) -> bool:
@@ -294,13 +315,17 @@ def _bridge_host(view, url: str) -> None:
     """
     if MEDIA_HOST is None:
         return
-    _remember_url(url)
+    state_written = _remember_url(url)
+    repaired = 0
     try:
         # an upgrade can leave our own bindings pointing at an old command;
         # repairing an existing binding is not installing a new shortcut
-        MEDIA_HOST.repair()
+        repaired = int((MEDIA_HOST.repair() or {}).get("repaired") or 0)
     except Exception:
         pass
+    _keylog("host", "bridge", BRIDGE_VERSION,
+            "state" if state_written else "no-state",
+            f"repaired={repaired}", always=True)
 
     def _received(_manager, value) -> None:
         try:
@@ -321,6 +346,13 @@ def _bridge_host(view, url: str) -> None:
             answer = {"available": False, "installed": False, "rows": [],
                       "ok": False, "error": str(error)}
         answer = dict(answer or {})
+        # a page from a newer package must be able to see that it is talking
+        # to an older window (one that has no probe and no state file)
+        answer["bridge"] = BRIDGE_VERSION
+        answer["state_written"] = state_written
+        if op == "probe":
+            answer["url"] = _safe_url(url)
+            answer["server_from_window"] = _server_ok(url)
         answer["view"] = "media-keys"
         answer["op"] = op
         answer["id"] = payload.get("id")
@@ -469,6 +501,23 @@ class _Media:
         self.track_key = None
         self._focus_only = None     # cached: are global bindings missing?
         self._hinted = False
+        self._grab_state = None     # cached host state for grab checks
+        self._grab_checked = 0.0
+        self._grab_hinted = False
+
+    def _host_status(self) -> dict:
+        """The host keybinding state, with a short cache for key presses."""
+        now = time.monotonic()
+        if self._grab_state is None or now - self._grab_checked > 10.0:
+            state: dict = {}
+            if MEDIA_HOST is not None:
+                try:
+                    state = MEDIA_HOST.status()
+                except Exception:
+                    state = {}
+            self._grab_state = state
+            self._grab_checked = now
+        return self._grab_state or {}
 
     def _global_missing(self) -> bool:
         """True when the keys are focus-only and the desktop could fix that.
@@ -477,12 +526,7 @@ class _Media:
         ``gsettings`` calls per key, and the state is not what changes mid-run.
         """
         if self._focus_only is None:
-            state = {}
-            if MEDIA_HOST is not None:
-                try:
-                    state = MEDIA_HOST.status()
-                except Exception:
-                    state = {}
+            state = self._host_status()
             self._focus_only = bool(state.get("available")) \
                 and not state.get("installed")
         return bool(self._focus_only)
@@ -499,6 +543,32 @@ class _Media:
         self._hinted = True
         _eval_js(self.view, "window.jmpMediaKeysHint && "
                             "window.jmpMediaKeysHint();")
+
+    def grab_failed_for(self, name: str) -> bool:
+        """True when a key with a global binding still reached this window.
+
+        gsd grabs a working shortcut before the focused application sees it,
+        so a plain F5-F8 arriving here while our binding exists means the
+        desktop did not grab it (another shortcut, or a refused grab).  The
+        host state is cached for a few seconds: a press must not run ten
+        ``gsettings`` calls.
+        """
+        if MEDIA_HOST is None or not name:
+            return False
+        state = self._host_status()
+        if not state.get("available"):
+            return False
+        for row in state.get("rows") or []:
+            if str(row.get("key") or "") == name:
+                return bool(row.get("path"))
+        return False
+
+    def notify_grab_failure(self, name: str) -> None:
+        if self._grab_hinted or self.view is None:
+            return
+        self._grab_hinted = True
+        _eval_js(self.view, "window.jmpGrabFailed && window.jmpGrabFailed("
+                            + json.dumps({"key": name}) + ");")
 
     def act(self, action: str, value=None) -> None:
         def _send() -> None:
@@ -726,6 +796,9 @@ def _gtk3(url: str) -> None:
                 int(event.state), action or "-")
         if action:
             media.notify_hint()
+            if plain and media.grab_failed_for(name):
+                _keylog("host", "grab", name, "not grabbed", always=True)
+                media.notify_grab_failure(name)
         return bool(action)
 
     window.connect("key-press-event", _key)
@@ -776,6 +849,9 @@ def _gtk4(url: str) -> None:
         _keylog("gtk4", name, keyval, keycode, int(state), action or "-")
         if action:
             media.notify_hint()
+            if plain and media.grab_failed_for(name):
+                _keylog("host", "grab", name, "not grabbed", always=True)
+                media.notify_grab_failure(name)
         return bool(action)
 
     controller.connect("key-pressed", _key)

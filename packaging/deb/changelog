@@ -1,3 +1,27 @@
+jmp-ai-music-player (1.2.3-1) unstable; urgency=medium
+
+  * Make the media-key diagnosis honest instead of one message for every
+    failure.  If the app window is older than the page that is testing it
+    (an upgrade where the window process kept running, or a launcher that
+    starts an older window next to a newer server), Test no longer says
+    "cannot reach the player" without a reason: it says the window is older
+    and asks for a restart.
+  * Test now reports the route it found, or why every route failed, and names
+    the shortcut log to inspect.  A missing address file
+    (~/.cache/julians-music-app/host.json), an unreachable server and an
+    absent MPRIS player are no longer the same sentence.
+  * A plain F5-F8 that still reaches the focused window although one of JMP's
+    global bindings exists is logged as "not grabbed" and reported once.  If
+    gsd had grabbed the key it would never arrive at the window, so this is
+    direct evidence of a refused grab or a conflicting shortcut.
+  * The helper writes one "probe" line per Test to
+    ~/.cache/julians-music-app/media-keys.log, so a failed test leaves a
+    trace without the API token.
+  * No music file, tag or playlist is touched; a key press still runs exactly
+    one transport command.
+
+ -- Julian M. Kunkel <julian.kunkel@gwdg.de>  Sun, 22 Nov 2026 20:10:00 +0100
+
 jmp-ai-music-player (1.2.2-1) unstable; urgency=medium
 
   * Make the GNOME global media keys actually reach the player.  A binding

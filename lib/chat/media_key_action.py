@@ -165,8 +165,15 @@ def probe(cli: str = "") -> dict:
         "mpris": _mpris_owner(),
         "cli": _cli_path(cli),
         "urls": [_safe(url) for url in urls[:2]],
+        "state": [str(path) for path in STATE_FILES if path.is_file()],
+        "log": str(LOG),
     }
     answer["ok"] = bool(answer["http"] or answer["mpris"] or answer["cli"])
+    if not answer["ok"]:
+        answer["error"] = (
+            "the app has not recorded its address yet; start the app window "
+            "once" if not urls else
+            "the recorded server and the MPRIS player did not answer")
     return answer
 
 
@@ -237,6 +244,10 @@ def main(argv: list[str] | None = None) -> int:
         del args[index:index + 2]
     if args[:1] == ["--probe"]:
         answer = probe(cli)
+        _log("probe", "ok" if answer.get("ok") else "failed",
+             "http=%d mpris=%d cli=%d state=%d" % (
+                 bool(answer.get("http")), bool(answer.get("mpris")),
+                 bool(answer.get("cli")), len(answer.get("state") or [])))
         print(json.dumps(answer, ensure_ascii=False))
         return 0 if answer.get("ok") else 1
     if not args:
