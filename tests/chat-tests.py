@@ -3436,6 +3436,112 @@ def check_stats(work: Path) -> None:
     engine.close()
 
 
+def check_profile_page(work: Path) -> None:
+    """The Profile page: every learned weight and how it is applied.
+
+    The page under Settings → Profile renders `GET /api/profile`, which is
+    `Engine.profile_data()`: the buckets with the bounded bias the selection
+    really uses, the notes, learned phrases, recent plays, built playlists and
+    the newest events.  Everything here is read-only.
+    """
+    lib = work / "profile-library"
+    if lib.exists():
+        shutil.rmtree(lib)
+    build_library(lib)
+    engine = Engine(root=lib, use_llm=False)
+    try:
+        metal = engine.catalog.search("Eisenwerk", limit=1)[0]
+        calm = engine.catalog.search("Federleicht", limit=1)[0]
+        engine.profile.like_track(metal, 1.0)
+        engine.profile.dislike_track(calm, 1.0)
+        engine.profile.note("prefer instrumental music while working")
+        engine.profile.add_mapping("smooth", ["Chill", "Jazz"])
+        engine.profile.observe(metal, 0.9, "Workout")
+        engine.profile.record_playlist("Workout Mix", {"Workout": 1.0}, 12,
+                                       "play something aggressive")
+        data = engine.profile_data()
+
+        artists = {row["name"]: row for row in data["weights"]["artists"]}
+        check("the profile page lists a liked artist",
+              "Eisenwerk" in artists and artists["Eisenwerk"]["weight"] > 0,
+              str(artists)[:300])
+        check("a weight becomes the bounded bias selection applies",
+              abs(artists["Eisenwerk"]["bias"])
+              <= abs(artists["Eisenwerk"]["weight"]) + 1e-9
+              and artists["Eisenwerk"]["bias"] > 0,
+              str(artists.get("Eisenwerk"))[:200])
+        check("a disliked artist carries a negative weight",
+              "Federleicht" in artists and artists["Federleicht"]["weight"] < 0,
+              str(artists.get("Federleicht")))
+        check("genres and moods are counted too",
+              {row["name"] for row in data["weights"]["genres"]} >= {"Metal"}
+              and data["counts"]["moods"] >= 1,
+              f'{data["weights"]["genres"]} {data["counts"]}')
+        check("positive and negative weights are counted separately",
+              data["counts"]["positive"] >= 2 and data["counts"]["negative"] >= 1,
+              str(data["counts"]))
+        check("a note is listed with its text",
+              data["notes"] and "instrumental" in data["notes"][0]["text"],
+              str(data["notes"])[:200])
+        check("a learned phrase is listed with its moods",
+              data["mappings"] and data["mappings"][0]["phrase"] == "smooth"
+              and "Chill" in data["mappings"][0]["moods"],
+              str(data["mappings"])[:200])
+        check("a recent play names the track and how much was heard",
+              data["recent"] and "Eisenwerk" in data["recent"][0]["label"]
+              and data["recent"][0]["fraction"] == 0.9,
+              str(data["recent"][:1])[:250])
+        kinds = {row["kind"] for row in data["events"]}
+        check("the events say what taught the profile",
+              {"like", "dislike", "listened"} <= kinds, str(sorted(kinds)))
+        check("a built playlist is listed with its request",
+              data["playlists"] and data["playlists"][0]["name"] == "Workout Mix"
+              and data["playlists"][0]["count"] == 12,
+              str(data["playlists"][:1])[:200])
+        check("the page names the file it reads",
+              data["rel_path"] == "library-work/app/chat/profile.json",
+              str(data.get("rel_path")))
+        check("the page says when the profile last changed",
+              bool(data["updated_ago"]), str(data.get("updated_ago")))
+
+        service = ChatService(root=lib, use_llm=False, auto_psycho=False)
+        try:
+            page = service.profile_page()
+            check("the window API returns the same page",
+                  page["counts"]["artists"] == data["counts"]["artists"]
+                  and page["notes"][0]["text"] == data["notes"][0]["text"],
+                  str(page["counts"])[:200])
+        finally:
+            service.engine.close()
+
+        reply = engine.handle("what have you learned")
+        check("chat points at the Profile page",
+              reply.tool == "profile"
+              and "Settings → Profile" in clean_text(reply),
+              f"{reply.tool}: {clean_text(reply)[-200:]}")
+        planned = nlu_plan("show my profile", engine.ctx, engine.catalog)
+        check("“show my profile” opens the same summary",
+              planned is not None and planned.skill == "learn-preferences"
+              and planned.args.get("kind") == "show", str(planned)[:200])
+
+        app_js = (LIB / "chat" / "webui" / "app.js").read_text(
+            encoding="utf-8")
+        check("Settings has a Profile tab",
+              'tabPanel(\n        "Profile"' in app_js
+              or '"Profile",\n        "What the app has learned' in app_js,
+              "no Profile tab in openSettings")
+        check("the tab reads the read-only profile endpoint",
+              'api("/api/profile?limit=100"' in app_js, "no /api/profile call")
+        check("the page explains how a weight is used",
+              "tanh(weight" in app_js, "no formula shown")
+        check("nothing on the page deletes a weight",
+              '"/api/profile"' in app_js
+              and 'api("/api/profile", {' not in app_js,
+              "the page posts instead of reading")
+    finally:
+        engine.close()
+
+
 def check_radio(work: Path) -> None:
     """Radio mode: the picks, the state, the queue top-up and the chat."""
     import random as random_mod
@@ -6500,6 +6606,7 @@ def main() -> int:
         check_tagedit(work)
         check_smart(work)
         check_stats(work)
+        check_profile_page(work)
         check_radio(work)
         check_endless(work)
         check_explain(work)

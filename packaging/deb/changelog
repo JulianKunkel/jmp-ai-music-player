@@ -1,3 +1,16 @@
+jmp-ai-music-player (1.1.2-1) unstable; urgency=medium
+
+  * New Settings tab "Profile": see what the app learned about you — every
+    artist, genre, mood and keyword weight with the bounded influence that
+    selection really applies, plus notes, learned phrases, recent plays and
+    the events that changed them.  Read-only.
+  * The now-playing header keeps its label on its own line and fits all nine
+    icon buttons below it, wrapping instead of overflowing on a narrow
+    sidebar.
+  * "What have you learned" in chat points at the new Profile page.
+
+ -- Julian M. Kunkel <julian.kunkel@gwdg.de>  Sun, 22 Nov 2026 18:10:00 +0100
+
 jmp-ai-music-player (1.1.1-1) unstable; urgency=medium
 
   * Window opens at 1440x960 and refuses to shrink below 1024x640, so the

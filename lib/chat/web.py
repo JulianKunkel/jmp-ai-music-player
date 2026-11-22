@@ -645,6 +645,11 @@ class ChatService:
         with self.lock:
             return self.engine.activity_data(limit)
 
+    def profile_page(self, limit: int = 40) -> dict:
+        """Everything the Profile page shows — read-only."""
+        with self.lock:
+            return self.engine.profile_data(limit)
+
     def recent_changes(self, limit: int = 30) -> dict:
         rows = self.engine.recent_changes(limit)
         return {"changes": rows,
@@ -2397,6 +2402,15 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 limit = 40
             self._json(self.service.activity(limit))
+            return
+        if path == "/api/profile":
+            query = parse_qs(parsed.query)
+            raw = (query.get("limit") or ["40"])[0]
+            try:
+                limit = int(raw)
+            except ValueError:
+                limit = 40
+            self._json(self.service.profile_page(limit))
             return
         if path == "/api/recent":
             query = parse_qs(parsed.query)

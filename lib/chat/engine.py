@@ -2274,6 +2274,136 @@ class Engine:
             },
         }
 
+    def profile_data(self, limit: int = 40) -> dict:
+        """What the app has learned about the listener, as plain data.
+
+        The Profile page in Settings renders exactly this, and so does
+        `GET /api/profile`: every learned weight with the bounded bias the
+        selection really applies (`tanh(weight / 2.5)`, so `+1` is a strong
+        favourite), the notes, the learned phrases, the recent plays and the
+        newest events.  Read-only — nothing here writes to the profile or to a
+        music file.
+        """
+        try:
+            limit = int(limit or 40)
+        except (TypeError, ValueError):
+            limit = 40
+        limit = max(5, min(400, limit))
+        data = self.profile.data
+
+        def bucket_rows(bucket: str) -> list[dict]:
+            table = data.get(bucket) or {}
+            rows = []
+            if isinstance(table, dict):
+                for name, value in table.items():
+                    try:
+                        weight = float(value)
+                    except (TypeError, ValueError):
+                        continue
+                    rows.append({
+                        "name": str(name),
+                        "weight": round(weight, 2),
+                        "bias": round(self.profile.bias(weight), 3),
+                    })
+            rows.sort(key=lambda row: -abs(row["weight"]))
+            return rows
+
+        weights = {bucket: bucket_rows(bucket)
+                   for bucket in ("artists", "genres", "moods", "keywords")}
+        notes = []
+        for note in (data.get("notes") or [])[:limit]:
+            notes.append({
+                "text": str(note.get("text") or ""),
+                "at": str(note.get("at") or ""),
+                "ago": self._ago(str(note.get("at") or "")),
+            })
+        mappings = []
+        table = data.get("mappings") or {}
+        if isinstance(table, dict):
+            for phrase, moods in table.items():
+                mappings.append({
+                    "phrase": str(phrase),
+                    "moods": [str(mood) for mood in (moods or [])],
+                })
+        recent = []
+        for row in (data.get("recent") or [])[:limit]:
+            rel = str(row.get("rel") or "")
+            track = self.catalog.track(rel) if rel else None
+            recent.append({
+                "rel": rel,
+                "label": track.label() if track is not None else Path(rel).stem,
+                "artist": track.artist if track is not None else "",
+                "genre": track.genre if track is not None else "",
+                "fraction": round(float(row.get("fraction") or 0), 3),
+                "at": str(row.get("at") or ""),
+                "ago": self._ago(str(row.get("at") or "")),
+            })
+        events = []
+        for event in (data.get("events") or [])[:limit]:
+            events.append({
+                "kind": str(event.get("kind") or ""),
+                "value": str(event.get("value") or ""),
+                "label": self._event_label(str(event.get("value") or "")),
+                "source": str(event.get("source") or ""),
+                "changes": [str(item) for item in (event.get("changes") or [])],
+                "at": str(event.get("at") or ""),
+                "ago": self._ago(str(event.get("at") or "")),
+            })
+        playlists = []
+        for row in (data.get("playlists") or [])[:limit]:
+            playlists.append({
+                "name": str(row.get("name") or ""),
+                "count": int(row.get("count") or 0),
+                "request": str(row.get("request") or ""),
+                "at": str(row.get("at") or ""),
+                "ago": self._ago(str(row.get("at") or "")),
+            })
+        try:
+            learned = [{
+                "name": str(item.get("name") or item.get("skill") or ""),
+                "skill": str(item.get("skill") or ""),
+                "triggers": [str(t) for t in (item.get("triggers") or [])],
+            } for item in self.agent.learned()]
+        except OSError:
+            learned = []
+        path = self.profile.path
+        return {
+            "created": str(data.get("created") or ""),
+            "updated": str(data.get("updated") or ""),
+            "updated_ago": self._ago(str(data.get("updated") or "")),
+            "path": str(path) if path else "",
+            "rel_path": ("library-work/app/chat/profile.json" if path else ""),
+            "loaded": bool(self.profile.loaded),
+            "writable": bool(self.profile.writable),
+            "weights": weights,
+            "counts": {
+                "artists": len(weights["artists"]),
+                "genres": len(weights["genres"]),
+                "moods": len(weights["moods"]),
+                "keywords": len(weights["keywords"]),
+                "positive": sum(1 for rows in weights.values()
+                                for row in rows if row["weight"] > 0),
+                "negative": sum(1 for rows in weights.values()
+                                for row in rows if row["weight"] < 0),
+                "notes": len(data.get("notes") or []),
+                "mappings": len(mappings),
+                "recent": len(data.get("recent") or []),
+                "events": len(data.get("events") or []),
+                "playlists": len(data.get("playlists") or []),
+                "learned": len(learned),
+            },
+            "notes": notes,
+            "mappings": mappings,
+            "recent": recent,
+            "events": events,
+            "playlists": playlists,
+            "learned": learned,
+            "agent": {
+                "requests": self.agent.count(),
+                "learned": len(learned),
+            },
+        }
+
     def recent_changes(self, limit: int = 30) -> list[dict]:
         """The newest journalled changes, newest first (read-only)."""
         try:
@@ -3411,8 +3541,10 @@ class Engine:
         kind = str(args.get("kind") or "show").casefold()
         value = str(args.get("value") or "").strip()
         if kind in {"show", "summary", "profile"}:
-            return Reply("## What I learned\n\n" + self.profile.summary_markdown(),
-                         tool="profile")
+            return Reply("## What I learned\n\n" + self.profile.summary_markdown()
+                         + "\n\nThe full picture — every weight, its bounded "
+                         "influence, your notes and learned phrases — is in "
+                         "**Settings → Profile**.", tool="profile")
         if kind == "note":
             if not value:
                 return Reply("What should I remember?", error=True)
