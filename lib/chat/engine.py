@@ -70,6 +70,10 @@ PY = sys.executable
 class Reply:
     text: str = ""
     tool: str = ""
+    #: which planner produced the answer: "local planner", "learned phrase",
+    #: or the language model's label.  The window shows it under the bubble so
+    #: a listener can tell an offline answer from a model answer.
+    planner: str = ""
     tracks: list[Track] = field(default_factory=list)
     played: bool = False
     error: bool = False
@@ -231,6 +235,7 @@ class Engine:
         return reply
 
     def _converse(self, text: str) -> Reply:
+        planner = "local planner"
         try:
             plan = nlu_plan(text, self.ctx, self.catalog, self.profile)
             # a phrase learned from an earlier unrecognised request comes
@@ -239,8 +244,10 @@ class Engine:
                 learned = self.agent.plan(text)
                 if learned is not None:
                     plan = learned
+                    planner = "learned phrase · local"
             if plan is None or plan.confidence < 0.6:
                 if self.llm.available():
+                    planner = self.llm.badge()
                     # the planner is an agent: it may look the library up with
                     # tools and make the one allowed write (a playlist) before
                     # answering, instead of only picking a skill name
@@ -251,7 +258,9 @@ class Engine:
                     if result and result.get("plan") is not None:
                         plan = result["plan"]
                     elif result is not None:
-                        return self._agent_reply(result, toolbox)
+                        reply = self._agent_reply(result, toolbox)
+                        reply.planner = planner
+                        return reply
                     else:
                         better = self.llm.plan(text, self.ctx, self.profile,
                                                self.catalog.stats(),
@@ -259,16 +268,55 @@ class Engine:
                         if better is not None:
                             plan = better
             if plan is None:
-                return self._fallback(text)
+                reply = self._fallback(text)
+                reply.planner = planner
+                return reply
             reply = self._execute(plan, text)
+            if (reply.error and "Nothing matches" in reply.text
+                    and self.llm.available()):
+                # the offline parser matched but found nothing: a dead end is
+                # not the answer, so the planner gets the sentence after all
+                rescued = self._llm_turn(text)
+                if rescued is not None:
+                    rescued.planner = self.llm.badge()
+                    return rescued
             if plan.say and plan.say.casefold() not in reply.text.casefold():
                 reply.text = plan.say + "\n\n" + reply.text
+            reply.planner = planner
             return reply
         except (SystemExit, OSError, ValueError) as exc:
             return Reply(f"That did not work: {exc}", error=True)
         except Exception as exc:  # never take the UI down
             return Reply(f"Unexpected problem: `{type(exc).__name__}: {exc}`",
                          error=True)
+
+    def _llm_turn(self, text: str) -> Reply | None:
+        """One planner turn, used to rescue an offline plan that found nothing.
+
+        Returns ``None`` when the planner produced nothing usable, so the
+        caller keeps the offline answer instead of replacing a hint with an
+        empty reply or a second identical miss.
+        """
+        toolbox = Toolbox(self, text)
+        result = self.llm.agent(text, self.ctx, self.profile,
+                                self.catalog.stats(), toolbox, self.history)
+        if result is None:
+            better = self.llm.plan(text, self.ctx, self.profile,
+                                   self.catalog.stats(), self.history)
+            if better is None:
+                return None
+            reply = self._execute(better, text)
+        else:
+            plan = result.get("plan")
+            if plan is not None:
+                reply = self._execute(plan, text)
+            elif toolbox.calls or str(result.get("text") or "").strip():
+                reply = self._agent_reply(result, toolbox)
+            else:
+                return None
+        if reply.error and "Nothing matches" in reply.text:
+            return None
+        return reply
 
     def _play_intended(self, args: dict, request: str) -> bool:
         """Did the listener ask to hear something, or only to look for it?
@@ -1376,7 +1424,10 @@ class Engine:
                                    if ok else f"\n\n_{message}_"))
                         return Reply(text, tracks=ranked.tracks, played=ok,
                                      tool="rank-library")
-                return Reply(f"Nothing matches “{_escape(target)}”.", error=True)
+                return Reply(
+                    f"Nothing matches “{_escape(target)}”.\n\n"
+                    "Try a broader word, or ask what I can play — for "
+                    "example “can you play spc files?”.", error=True)
 
             # several hits: a genre queue beats a list of titles that share the word
             genre_hits = self.catalog.by_genre(target)
@@ -5031,6 +5082,13 @@ class Engine:
                          + "\n".join(f"- “{example}”" for example in examples()),
                          tool="help")
         action = str(args.get("action") or "").casefold()
+        if action in {"formats", "format", "capabilities", "support"}:
+            # "can you play spc files?" — a format is not a title, so it is
+            # answered from the capability table, never by searching names
+            from . import formats as formats_mod
+            return Reply(formats_mod.answer(self.root,
+                                            str(args.get("format") or "")),
+                         tool="library-overview · formats")
         if action == "health":
             return Reply(health.markdown(self.library_health()),
                          tool="library-overview · health")

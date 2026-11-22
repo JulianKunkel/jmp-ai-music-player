@@ -798,6 +798,17 @@ kbd {
 }
 .md pre code { background: none; border: 0; padding: 0; color: #c8d0dc; }
 
+/* which planner answered: the offline parser or the language model */
+.bubble .planner {
+  margin-top: 8px;
+  font: 10.5px var(--mono);
+  letter-spacing: 0.02em;
+  color: var(--faint);
+  opacity: 0.75;
+  user-select: none;
+}
+.bubble .planner.llm { color: var(--accent, #8f7fd8); opacity: 0.95; }
+
 /* the indented "path" lines the engine emits below a track */
 .md .meta {
   display: block;

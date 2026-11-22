@@ -16,6 +16,7 @@ import re
 from dataclasses import dataclass, field
 
 from .catalog import Track, fold
+from . import formats as formats_mod
 from .psycho import CONCEPT_WORDS, CONCEPTS
 from .selection import GENRE_WORDS, MOOD_PHRASES, MOOD_WORDS, moods_from_text
 from .settings import parse as parse_settings
@@ -918,6 +919,89 @@ def _name_for(moods: dict[str, float], text: str) -> str:
         first = max(moods, key=lambda key: moods[key])
         return first
     return "Mix"
+
+
+#: a sentence that asks rather than commands.  "can you play spc files" is a
+#: question about the player; "play spc files" is a command.
+QUESTION_OPENERS = (
+    "can", "could", "do", "does", "would", "will", "should", "are", "is",
+    "am", "how", "what", "which", "where", "kann", "kannst", "koennen",
+    "ist", "sind", "wird", "wie", "was", "welche", "welchen", "welcher",
+    "unterstuetzt", "unterstutzt", "spielt", "spielen",
+)
+
+#: the verbs that name a capability instead of an action
+CAPABILITY_VERBS = (
+    "play", "plays", "open", "opens", "read", "reads", "handle", "handles",
+    "support", "supports", "decode", "decodes", "tag", "tags", "import",
+    "convert", "abspielen", "spielt", "spielen", "lesen", "oeffnen",
+    "offnen", "unterstuetzen", "unterstuetzt", "konvertieren", "taggen",
+)
+
+#: words that make a capability question about formats in general
+FORMAT_WORDS = ("format", "formats", "file type", "file types",
+                "dateiformat", "dateityp", "dateitypen", "extension",
+                "extensions", "container", "codec", "codecs")
+
+#: words that carry no target of their own.  "what can you play" and "welche
+#: musik kannst du spielen" ask about the player in general; "what metal can
+#: you play" names a genre and is not a capability question.
+GENERIC_FILLER = {
+    "what", "which", "who", "can", "could", "do", "does", "would", "will",
+    "should", "are", "is", "you", "your", "i", "we", "the", "a", "an",
+    "player", "music", "song", "songs", "track", "tracks", "audio", "sound",
+    "here", "me", "please", "for", "us", "it", "this", "that", "some", "any",
+    "kind", "kinds", "sort", "sorts", "type", "types", "thing", "things",
+    "kann", "kannst", "koennen", "konnen", "du", "der", "die", "das", "dem",
+    "musik", "lied", "lieder", "titel", "was", "welche", "welcher", "welches",
+    "abspielen", "spielt", "spielen", "play", "plays", "playing", "support",
+    "supports", "supported", "unterstuetzt", "unterstuetzen", "unterstutzt",
+    "format", "formats", "datei", "dateien", "file", "files", "extension",
+    "extensions", "container", "codec", "codecs", "things",
+}
+
+
+def _word_in(text: str, word: str) -> bool:
+    return re.search(r"(?<!\w)" + re.escape(word) + r"(?!\w)", text) is not None
+
+
+def capability_question(text: str) -> str | None:
+    """The format a capability question names, ``""`` for a general one.
+
+    ``None`` means "not a capability question".  "can you play spc files?",
+    "do you support flac", "what formats can you play" and "kannst du spc
+    abspielen" all ask about the player, while "can you play some jazz" names
+    a performer and stays a play request.
+    """
+    folded = fold(text)
+    asks = (any(_word_in(folded, word) for word in QUESTION_OPENERS)
+            or "supported" in folded or "unterstuetzt" in folded
+            or "support for" in folded
+            or str(text).strip().endswith("?"))
+    if not asks:
+        return None
+    verb = any(_word_in(folded, word) for word in CAPABILITY_VERBS)
+    about_formats = any(_word_in(folded, word)
+                        for word in FORMAT_WORDS + ("file", "files", "datei",
+                                                    "dateien"))
+    lenient = "support" in folded or "unterstuetzt" in folded
+    named = formats_mod.resolve(text, lenient=lenient)
+    if not (verb or named):
+        return None
+    if named:
+        # the extension the sentence named, not the sentence: the answer must
+        # not have to guess again ("is sid supported" would lose its lenient
+        # reading of the ambiguous word "sid")
+        return named[0]
+    if about_formats:
+        return ""
+    # "what can you play", "what music can you play": a general question with
+    # nothing but filler words around the verb
+    words = re.findall(r"[a-z0-9']+", folded)
+    if verb and not [word for word in words
+                     if word not in GENERIC_FILLER]:
+        return ""
+    return None
 
 
 def plan(text: str, ctx: Context, catalog, profile=None) -> Plan | None:
@@ -2492,6 +2576,18 @@ def plan(text: str, ctx: Context, catalog, profile=None) -> Plan | None:
             args["days"] = days
         return Plan("recent", args, confidence=0.85)
 
+    # -- what the player can do -------------------------------------------
+    #
+    # "can you play spc files?" is a question about the player, not a command.
+    # The play rule below would strip the word *play* and search the titles for
+    # "can you spc files", which answers "Nothing matches" — a format is not a
+    # title.  The answer comes from one table (chat/formats.py).
+    capability = capability_question(original)
+    if capability is not None:
+        return Plan("library-overview",
+                    {"action": "formats", "format": capability},
+                    confidence=0.9)
+
     # -- play -------------------------------------------------------------
 
     whole = (_has(f, "all", "everything", "alles", "ganze", "ganzen",
@@ -2515,7 +2611,11 @@ def plan(text: str, ctx: Context, catalog, profile=None) -> Plan | None:
                       "anschliessend", "after that")
         target = original
         target = re.sub(r"(?i)\b(?:please|bitte|for me|für mich|fuer mich|"
-                        r"now|jetzt|mal|doch)\b", " ", target)
+                        r"now|jetzt|mal|doch|can you|could you|would you|"
+                        r"will you|do you|does it|does the player|can i|"
+                        r"how do i|how can i|kannst du|koennen sie|können sie|"
+                        r"kann man|darf ich|what|which|welche|welchen|"
+                        r"welcher|welches|was)\b", " ", target)
         target = re.sub(r"(?i)\b(?:play|spiele|spiel|abspielen|höre|hoer|hör|"
                         r"listen to|put on|queue|start|shuffle|shuffled|"
                         r"random|zufällig|zufaellig)\b", " ", target)

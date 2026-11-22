@@ -204,7 +204,10 @@ class ChatApp(App):
             self.action_clear()
             return
         if reply.text:
-            self._add_assistant(reply.text, error=reply.error)
+            text = reply.text
+            if reply.planner:
+                text += f"\n\n*{reply.planner}*"
+            self._add_assistant(text, error=reply.error)
         if reply.quit:
             self.exit()
             return

@@ -18,9 +18,30 @@ imported file is missing from the numbers, the library has not been re-indexed
 yet (`music index`, or the import does it).
 
 Arguments: `action` (`show` for this overview, `stats` for the statistics
-slice, `health`, `index`, `status`) and `focus` (`genres`, `artists`,
-`albums`, `decades`, `formats`, `added`, `length`, `quality`, `playlists`,
-`coverage`).
+slice, `formats` for what the player can play, `health`, `index`, `status`)
+and `focus` (`genres`, `artists`, `albums`, `decades`, `formats`, `added`,
+`length`, `quality`, `playlists`, `coverage`).
+
+**What can you play?**  `action: formats` (also "can you play spc files?",
+"do you support flac", "which formats do you know", "kannst du spc
+abspielen") answers from `chat/formats.py`, never by searching titles — a
+format is a property of the player, not a title.  Three honest cases:
+
+- **playable** — mpv is the player and ffmpeg its decoder, so any container
+  ffmpeg knows plays, even when the library holds none of it (`.flac`);
+- **indexed, not playable** — ffmpeg has no decoder for `.sid`, `.ym` or
+  `.play`, so those files are listed but a click cannot make a sound;
+- **chiptune** — `.spc`/`.mod`/`.xm`/`.it`/`.s3m` play, but a fixed header
+  replaces the tag block: no title, artist, genre or cover art, so they are
+  found through `reports/chiptune-catalogue.csv`, not by name.
+
+`format` narrows it to one extension or family word ("spc", "sid",
+"chiptune", "tracker", "lossless"); without it the whole table is listed with
+the library's per-format counts.  A question that names a performer stays
+playback ("can you play some jazz"), and the short names that are ordinary
+words (`.mod`, `.sid`, `.it`) only count as formats with a dot, a file word,
+or a "support" word.  The language-model tool surface has the same answer as
+`describe_formats`.
 
 **Health check.**  `action: health` (also "is the library healthy", "check the
 library", "what is broken", "prüfe die bibliothek") reads the inventory, the

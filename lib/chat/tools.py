@@ -122,6 +122,16 @@ class Toolbox:
                  "How big the library is: number of files, hours, artists, top "
                  "genres and playlist counts. Read-only.",
                  {}, []),
+            tool("describe_formats",
+                 "What the player can really play, and which formats the "
+                 "library holds. Use this for any capability question — "
+                 "'can you play spc files?', 'do you support flac', 'which "
+                 "formats do you know'. A format is never a title, so never "
+                 "answer such a question with search_library. Read-only.",
+                 {"format": {"type": "string",
+                             "description": "an extension or name, e.g. 'spc' "
+                             "or 'flac'; omit for the full list"}},
+                 []),
             tool("search_library",
                  "Full-text search over title, artist, album, genre, the old "
                  "shelf (GROUPING) and the path; ignores case and umlauts. "
@@ -319,6 +329,17 @@ class Toolbox:
                        for name, count in stats.get("genres", [])],
             "playlists": stats.get("playlists", {}),
             "measured_profiles": self.engine.psycho.count(),
+        }
+
+    def _tool_describe_formats(self, args: dict) -> dict:
+        from . import formats
+
+        return {
+            "answer": formats.answer(self.engine.root,
+                                     str(args.get("format") or "")),
+            "playable": sorted(formats.PLAYABLE),
+            "not_playable": sorted(formats.NOT_PLAYABLE),
+            "chiptune": sorted(formats.CHIPTUNE),
         }
 
     def _tool_search_library(self, args: dict) -> dict:

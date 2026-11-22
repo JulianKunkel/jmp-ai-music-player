@@ -1804,6 +1804,145 @@ def check_health(work: Path) -> None:
     shutil.rmtree(lib, ignore_errors=True)
 
 
+def check_formats(work: Path) -> None:
+    """"Can you play spc files?" is answered, not searched for.
+
+    Reported against 1.2.4: the question became a title search for "can you
+    spc files" and answered "Nothing matches".  A format is a property of the
+    player, not a title, and the honest answer differs per format — SPC plays
+    but has no tag block, SID is indexed but ffmpeg cannot decode it.
+    """
+    from chat import formats
+
+    lib = work / "formats"
+    if lib.exists():
+        shutil.rmtree(lib)
+    rows = []
+    for index in range(3):
+        rows.append({"rel_path": f"Chiptune/SPC/Game/{index:02d}.spc",
+                     "ext": ".spc", "title": "", "artist": "",
+                     "size_bytes": 100, "duration_s": 90})
+    for index in range(2):
+        rows.append({"rel_path": f"Chiptune/C64/Game/{index:02d}.sid",
+                     "ext": ".sid", "title": "", "artist": "",
+                     "size_bytes": 100, "duration_s": 90})
+    rows.append({"rel_path": "Artists/Eisenwerk/A/01.mp3", "ext": ".mp3",
+                 "title": "Schweiss", "artist": "Eisenwerk", "album": "A",
+                 "genre": "Metal", "size_bytes": 1000, "duration_s": 200})
+    (lib / "Artists" / "Eisenwerk" / "A").mkdir(parents=True, exist_ok=True)
+    (lib / "Artists" / "Eisenwerk" / "A" / "01.mp3").write_bytes(
+        b"ID3" + b"\x00" * 20)
+    inventory = lib / "library-work" / "inventory" / "files.jsonl"
+    inventory.parent.mkdir(parents=True, exist_ok=True)
+    inventory.write_text("".join(json.dumps(row) + "\n" for row in rows),
+                         encoding="utf-8")
+
+    check("a spoken extension resolves",
+          formats.resolve("spc") == [".spc"]
+          and formats.resolve("spc files") == [".spc"]
+          and formats.resolve("flac") == [".flac"],
+          str(formats.resolve("spc files")))
+    check("a word that is also a verb is not a format",
+          formats.resolve("play") == [] and formats.resolve("can you play") == [],
+          str(formats.resolve("play")))
+    check("a dotted name is always a format",
+          formats.resolve(".play") == [".play"],
+          str(formats.resolve(".play")))
+    check("“it” stays a pronoun",
+          formats.resolve("can you play it") == [],
+          str(formats.resolve("can you play it")))
+    check("a short name needs a file marker",
+          formats.resolve("sid files") == [".sid"]
+          and formats.resolve("mod file") == [".mod"],
+          str(formats.resolve("mod file")))
+    check("support makes the short name lenient",
+          formats.resolve("sid", lenient=True) == [".sid"],
+          str(formats.resolve("sid", lenient=True)))
+    check("a family word resolves to the formats",
+          ".spc" in formats.resolve("chiptune")
+          and ".mod" in formats.resolve("tracker"),
+          str(formats.resolve("chiptune")))
+    check("no format in the sentence resolves to nothing",
+          formats.resolve("some jazz") == [], str(formats.resolve("some jazz")))
+
+    spc = formats.answer(lib, "spc")
+    check("spc is playable", spc.startswith("**Yes") and "`.spc`" in spc,
+          spc[:200])
+    check("spc is counted", "3 files" in spc, spc[:400])
+    check("spc carries the chiptune caveat",
+          "tag block" in spc and "chiptune-catalogue" in spc, spc[-300:])
+    sid = formats.answer(lib, "sid")
+    check("sid is indexed but not playable",
+          sid.startswith("**No") and "66" not in sid and "2 files" in sid,
+          sid[:300])
+    generic = formats.answer(lib, "")
+    check("the general answer lists both sides",
+          "` .spc`" not in generic and "`.spc`" in generic
+          and "indexed only" in generic, generic[:300])
+    check("the general answer names the library's counts",
+          "In this library:" in generic and "`.spc` 3" in generic,
+          generic[-300:])
+    unknown = formats.answer(lib, "xyz")
+    check("an unknown format is answered honestly",
+          "I don't know the format" in unknown and "xyz" in unknown,
+          unknown[:200])
+
+    engine = Engine(root=lib, use_llm=False, dry_run=True)
+    turn = engine.handle("can you play spc files?")
+    check("the question is a capability answer, not a search",
+          turn.tool == "library-overview · formats"
+          and turn.text.startswith("**Yes"), f"{turn.tool} / {turn.text[:80]}")
+    check("the answer is not the empty search",
+          "Nothing matches" not in turn.text, turn.text[:120])
+    check("the reply says the offline planner answered",
+          turn.planner == "local planner", turn.planner)
+    turn = engine.handle("do you support flac")
+    check("a format the library lacks is still answered",
+          "**Yes" in turn.text and "would play one" in turn.text,
+          turn.text[:200])
+    turn = engine.handle("is sid supported")
+    check("an unplayable format says no", turn.text.startswith("**No"),
+          turn.text[:120])
+    turn = engine.handle("what formats can you play")
+    check("the general question lists the formats",
+          "Formats I can play" in turn.text and "`.spc`" in turn.text,
+          turn.text[:200])
+    turn = engine.handle("kannst du spc abspielen")
+    check("the German question is answered too",
+          turn.text.startswith("**Yes"), turn.text[:120])
+
+    planned = nlu_plan("can you play some jazz", engine.ctx, engine.catalog)
+    check("a question naming a performer stays playback",
+          planned is not None and planned.skill == "play-music",
+          str(planned)[:200])
+    planned = nlu_plan("what can you play", engine.ctx, engine.catalog)
+    check("“what can you play” asks about formats in general",
+          planned is not None and planned.skill == "library-overview"
+          and planned.args.get("action") == "formats"
+          and not planned.args.get("format"), str(planned)[:200])
+    planned = nlu_plan("what metal can you play", engine.ctx, engine.catalog)
+    check("a genre in the question keeps it playback",
+          planned is not None and planned.skill == "play-music",
+          str(planned)[:200])
+    planned = nlu_plan("what can you do", engine.ctx, engine.catalog)
+    check("“what can you do” is not a format question",
+          planned is None or planned.args.get("action") != "formats",
+          str(planned)[:200])
+    planned = nlu_plan("can you play it", engine.ctx, engine.catalog)
+    check("“can you play it” is not the Impulse Tracker format",
+          planned is None or planned.args.get("format") in (None, ""),
+          str(planned)[:200])
+
+    before = {path.relative_to(lib).as_posix()
+              for path in lib.rglob("*") if path.is_file()}
+    engine.handle("can you play spc files?")
+    after = {path.relative_to(lib).as_posix()
+             for path in lib.rglob("*") if path.is_file()}
+    check("answering a format question writes nothing", before == after,
+          str(sorted(after - before))[:200])
+    engine.close()
+
+
 def check_duplicates(work: Path) -> None:
     """The duplicate reviewer reads the reports and never touches a file."""
     from chat import duplicates
@@ -3690,6 +3829,9 @@ def check_journey(work: Path) -> None:
         own = sorted(own_folder.glob("*.m3u8")) if own_folder.is_dir() else []
         check("a mood request answers", status == 200 and answer.get("text"),
               str(answer)[:160])
+        check("the API says which planner answered",
+              answer.get("planner") == "local planner",
+              str(answer.get("planner"))[:80])
         check("it leaves a real ad-hoc list in Playlists/Own",
               len(own) == 1, str(own))
         entries = [line.strip() for line in own[0].read_text(
@@ -5686,6 +5828,7 @@ class FakeModel(BaseHTTPRequestHandler):
             "tools": "The Eisenwerk shelf holds the tracks the tool returned.",
             "delete": "I did not delete anything.",
             "download": "I did not download anything.",
+            "rescue": "That word is not a track, but I can play the whole library.",
             "final": "Just a plain answer.",
         }.get(mode, "ok")
         self._send(200, {"choices": [{"message": {"role": "assistant",
@@ -5741,6 +5884,8 @@ def check_agent(root: Path) -> None:
               text[:200])
         check("the reply names the tool it used", "search_library" in reply.tool,
               reply.tool)
+        check("the agent reply is labelled as the language model",
+              reply.planner.startswith("language model"), reply.planner)
         check("the agent is offered the tools",
               bool(MODEL_SEEN) and MODEL_SEEN[0]["tools"] is True,
               str(MODEL_SEEN[:1])[:200])
@@ -5837,6 +5982,35 @@ def check_agent(root: Path) -> None:
         reply = final_engine.handle("please inspect the Eisenwerk shelf for me")
         check("a plain model answer becomes the reply",
               clean_text(reply) == "Just a plain answer.", clean_text(reply)[:200])
+
+        # -- an offline dead end is handed to the planner -------------------
+        #
+        # Reported: "can you play spc files?" was answered by the play rule as
+        # a title search, and the language model — which was configured — was
+        # never asked, so the listener saw "Nothing matches" and rightly
+        # wondered why the model did not answer.
+        rescue_engine = _engine_with_model(root, port, "rescue")
+        engines.append(rescue_engine)
+        MODEL_SEEN.clear()
+        reply = rescue_engine.handle("play zzzznotatrack")
+        check("a search miss asks the configured planner",
+              "not a track" in clean_text(reply), clean_text(reply)[:200])
+        check("the rescued answer is labelled as the planner's",
+              reply.tool.startswith("llm"), reply.tool)
+        check("the reply says the language model answered",
+              reply.planner.startswith("language model")
+              and "fake-model" in reply.planner, reply.planner)
+        check("the planner really saw the sentence",
+              any("zzzznotatrack" in json.dumps(entry["messages"])
+                  for entry in MODEL_SEEN), str(MODEL_SEEN[:1])[:200])
+
+        offline = Engine(root=root, use_llm=False, dry_run=True)
+        engines.append(offline)
+        reply = offline.handle("play zzzznotatrack")
+        check("without a planner the offline hint stays",
+              "Nothing matches" in clean_text(reply), clean_text(reply)[:200])
+        check("the offline reply is labelled as local",
+              reply.planner == "local planner", reply.planner)
     finally:
         for engine in engines:
             try:
@@ -7532,6 +7706,7 @@ def main() -> int:
         check_tagedit(work)
         check_smart(work)
         check_stats(work)
+        check_formats(work)
         check_profile_page(work)
         check_radio(work)
         check_endless(work)

@@ -103,6 +103,18 @@
   </branding>
 
   <releases>
+    <release version="1.2.5" date="2026-11-22">
+      <description>
+        <p>
+          A question about the player is answered as a question again: "can
+          you play spc files?" or "do you support flac" used to be searched
+          for as if it were a title.  Every reply also says whether the
+          offline planner or the configured language model answered, and an
+          offline dead end is handed to the model instead of stopping at
+          "Nothing matches".
+        </p>
+      </description>
+    </release>
     <release version="1.2.4" date="2026-11-22">
       <description>
         <p>

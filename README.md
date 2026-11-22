@@ -150,6 +150,7 @@ forms are shown where they differ in structure.
 | **Sound, mood and rank** | "find the slowest and boring song", "the 10 most aggressive tracks", "why is this the most aggressive?", "find music similar to this but faster", "find something 20 % faster", "show the timbre profile", "find the most bass-heavy song", "show the psycho families", "is the radio on?", "start a radio from this song", "more radio", "keep the music going", "never stop the music" |
 | **Lyrics** | "show the lyrics", "songs about the sea", "which song mentions pizza", "how many songs mention pizza", "export the lyrics as lrc", "shift the lyrics half a second later", "the lyrics are too early", "how many songs have lyrics" |
 | **Your library as data** | "how many tracks do I have", "which genres do I have most of", "what formats do I have", "the longest track", "what did I add this month", "what's new", "how complete is the library", "is the library healthy", "show duplicate 3", "library statistics" |
+| **What the player can do** | "can you play spc files?", "do you support flac", "is sid supported", "which formats can you play", "kannst du spc abspielen" — answered from a format table, including the ones that play but carry no tags and the ones the library lists but ffmpeg cannot decode |
 | **Import** *(optional module)* | "search the import source for <words>", "download 2", "download all", "retry the download", "clear the failed download", "add <url> to my library" — these need a build with an import module; without one the chat says so |
 | **Playlist import** | "import all playlists from ~/Downloads/playlists", "import this spotify playlist <link>" |
 | **Settings and upkeep** | "show the settings", "turn off the visualizer", "turn off the daily backup", "keep the last 5 backups", "use gwdg with api key sk-…", "change the music folder to /home/me/Musik", "index the library", "pause the indexing", "measure the library", "transcribe all songs without lyrics" |
@@ -160,6 +161,16 @@ Two rules the chat keeps: a **lookup lists, only a play word plays**, and it
 only enters through a local add or, when a build includes an optional
 download module, through that module — which checks duplicates and
 decodability first.
+
+**You always see who answered.**  Every reply carries a small line under it:
+*local planner* when the offline parser handled the sentence, or *language
+model · model name · provider · tools* when the model did.  The order is
+offline parser → phrase you taught it → language model, so a confident offline
+match never costs a network round trip — and when an offline match ends in a
+dead end ("Nothing matches …"), the model is asked after all instead of the
+chat stopping there.  `/llm` prints the full planner state, and the settings
+panel's **Language model** tab shows whether a server is configured and
+reachable.
 
 ## What it looks like
 

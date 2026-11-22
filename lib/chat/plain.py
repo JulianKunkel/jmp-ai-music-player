@@ -38,6 +38,8 @@ def run(root: Path | None = None, use_llm: bool = True, message: str | None = No
     if message:
         reply = engine.handle(message)
         print(_markdown_to_text(reply.text))
+        if reply.planner:
+            print(f"[{reply.planner}]")
         return 1 if reply.error else 0
 
     print("JulAIn Music Player — chat")
@@ -58,7 +60,8 @@ def run(root: Path | None = None, use_llm: bool = True, message: str | None = No
             print("\033[2J\033[H", end="")
             continue
         if reply.text:
-            print("\n" + _markdown_to_text(reply.text) + "\n")
+            print("\n" + _markdown_to_text(reply.text)
+                  + (f"\n[{reply.planner}]" if reply.planner else "") + "\n")
         if reply.quit:
             print("bye")
             return 0

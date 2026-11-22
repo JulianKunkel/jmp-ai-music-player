@@ -2212,6 +2212,7 @@ def _reply(reply) -> dict:
         "text": reply.text,
         "html": md_to_html(reply.text),
         "tool": reply.tool,
+        "planner": getattr(reply, "planner", "") or "",
         "error": bool(reply.error),
         "clear": bool(reply.clear),
         "quit": bool(reply.quit),

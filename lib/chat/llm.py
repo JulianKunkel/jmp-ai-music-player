@@ -185,6 +185,24 @@ class LLM:
         return bool(self.enabled and self.config.get("base_url")
                     and self.config.get("api_key"))
 
+    def badge(self) -> str:
+        """The short label of the planner that answered, for the chat bubble."""
+        if not self.enabled:
+            return "local planner"
+        if not self.available():
+            return "local planner · the language model is not configured"
+        model = str(self.config.get("model") or "").strip()
+        listed = self._models or []
+        model = model or (listed[0] if listed else "model")
+        provider = str(self.config.get("source") or "")
+        provider = provider.split(":", 1)[-1] if provider else ""
+        mode = "chat only" if self.tools_unsupported else "tools"
+        parts = ["language model", model]
+        if provider and provider not in {"?", "environment"}:
+            parts.append(provider)
+        parts.append(mode)
+        return " · ".join(parts)
+
     def summary(self) -> str:
         if not self.enabled:
             return "off (local planner only)"
