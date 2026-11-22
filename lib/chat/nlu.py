@@ -44,6 +44,13 @@ RANK_NOUNS = ("song", "songs", "track", "tracks", "titel", "lied", "lieder",
               "stuck", "stueck", "tune", "tunes", "piece", "pieces",
               "music", "musik", "album", "albums")
 
+#: words that make a sentence about the *words* of a song.  The lyric rules
+#: use them so that "more songs like this lyrically" compares words instead of
+#: being read as feedback ("like this") or as a "more like this" queue.
+LYRIC_CONTEXT = ("lyrics", "lyric", "songtext", "songtexte", "liedtext",
+                 "liedtexte", "gesangstext", "lyrically", "lyrisch",
+                 "lyrische", "lyrischen", "lyrischem", "lyrischer")
+
 
 #: words a lyric search is *about* — never part of the words to look for
 LYRIC_STRIP = set("""
@@ -1094,7 +1101,9 @@ def plan(text: str, ctx: Context, catalog, profile=None) -> Plan | None:
              "nochmal sowas", "noch so etwas", "similar", "ähnliches")
             or re.search(r"(?:^|\s)(?:more|mehr)(?:\s|$)", f)) \
             and not _has(f, "youtube", "you tube", "yt", "radio", "sender",
-                         "endless", "endlos") \
+                         "endless", "endlos",
+                         # a lyric request compares words, not sound
+                         *LYRIC_CONTEXT) \
             and not psycho_adjustments(original):
         seed_track = _current_track(ctx, catalog)
         if seed_track is not None:
@@ -1122,7 +1131,8 @@ def plan(text: str, ctx: Context, catalog, profile=None) -> Plan | None:
 
     if (re.search(r"(?:^|\s)(?:i\s+)?(?:really\s+)?(?:like|love)\s+this"
                   r"(?:\s+(?:song|track|one|tune))?(?:\s|$)", f)
-            and not psycho_adjustments(original)) \
+            and not psycho_adjustments(original)
+            and not _has(f, *LYRIC_CONTEXT)) \
             or re.search(r"(?:das|der|die)\s+gefallt mir|gefallt mir"
                          r"(?:\s|$)", f) \
             or f in {"like", "love", "mag das"}:
@@ -1848,6 +1858,31 @@ def plan(text: str, ctx: Context, catalog, profile=None) -> Plan | None:
                          "ausblenden", "schliessen", "schließen", "panel",
                          "fenster", "window", "settings", "einstellungen")
     lyric_search = (lyric_cue or bool(something_with) or bool(song_about))
+
+    # "songs with similar lyrics", "more songs like this lyrically": compare
+    # the words of one song's lyrics with every transcribed song.  The word
+    # *similar* alone is not enough — "similar songs that are faster" is a
+    # sound request for the profile ranking, which mentions no lyrics at all.
+    similar_word = re.search(
+        r"(?<!\w)(?:similar|alike|ahnlich\w*|aehnlich\w*|verwandt\w*|"
+        r"lyrically|lyrisch\w*)(?!\w)", f)
+    if similar_word and (lyric_cue or _has(f, "lyrically", "lyrisch",
+                                          "lyrische", "lyrischen")) \
+            and not _has(f, "download", "youtube", "settings", "einstellungen",
+                         "hide", "panel", "fenster", "window"):
+        target = ""
+        named_like = re.search(
+            r"(?:similar|alike|ahnlich\w*|aehnlich\w*|verwandt\w*|lyrically|"
+            r"lyrisch\w*)[^.]*?(?:to|like|as|wie|von|vom|zu|zum)\s+"
+            r"[\"“”']?([\wÄÖÜäöüß .'&+-]{2,60}?)[\"“”']?\s*[?.!]*$",
+            original, re.IGNORECASE)
+        if named_like:
+            found = catalog.search(named_like.group(1).strip(" .'\""), limit=1)
+            if found:
+                target = found[0].rel
+        return Plan("lyrics", {"action": "similar", "track": target,
+                               "limit": 12}, confidence=0.85)
+
     if lyric_search and not lyric_blocked:
         # "show the lyrics of <a named song>" is a show, not a search for the
         # song's name as a word inside the lyrics

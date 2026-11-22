@@ -1,3 +1,16 @@
+jmp-ai-music-player (1.1.1-1) unstable; urgency=medium
+
+  * Window opens at 1440x960 and refuses to shrink below 1024x640, so the
+    settings tabs and the sticky Save row are never clipped.
+  * Diagnostics shows the absolute server start time and can clean up its
+    logs from the panel (the old content is kept as .1).
+  * Find songs with similar lyrics: a TF-IDF word comparison over the stored
+    lyric lines, no model and no audio read.
+  * Fixes a TypeError in the mpv error message when a command carried a
+    float argument.
+
+ -- Julian M. Kunkel <julian.kunkel@gwdg.de>  Sun, 22 Nov 2026 16:30:00 +0100
+
 jmp-ai-music-player (1.1.0-1) unstable; urgency=medium
 
   * Endless mode: the queue grows from the track that just played and

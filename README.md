@@ -280,8 +280,8 @@ The release page carries a package built for Ubuntu 24.04 and 26.04
 <https://github.com/JulianKunkel/jmp-ai-music-player/releases>
 
 ```bash
-wget https://github.com/JulianKunkel/jmp-ai-music-player/releases/latest/download/jmp-ai-music-player_1.1.0-1_all.deb
-sudo apt install ./jmp-ai-music-player_1.1.0-1_all.deb
+wget https://github.com/JulianKunkel/jmp-ai-music-player/releases/latest/download/jmp-ai-music-player_1.1.1-1_all.deb
+sudo apt install ./jmp-ai-music-player_1.1.1-1_all.deb
 ```
 
 It installs the app under `/usr/lib/jmp`, the launcher `/usr/bin/music-cli`,

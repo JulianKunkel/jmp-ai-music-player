@@ -914,7 +914,7 @@ open_host_window() {
     for b in chromium chromium-browser google-chrome google-chrome-stable \\
              brave-browser microsoft-edge microsoft-edge-stable vivaldi-stable; do
         if command -v "\$b" >/dev/null 2>&1; then
-            "\$b" --app="\$url" --window-size=1280,880 \\
+            "\$b" --app="\$url" --window-size=1440,960 \\
                   --class=julians-music-app --name=julians-music-app \\
                   >/dev/null 2>&1 &
             return 0

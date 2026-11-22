@@ -185,6 +185,9 @@ class Diagnostics:
         with self.lock:
             data = {
                 "pid": os.getpid(),
+                # the wall-clock start, so "up 8 s" can never be mistaken for
+                # a counter that got stuck
+                "started_at": round(self.started, 3),
                 "uptime_s": round(time.time() - self.started, 2),
                 "requests": self.requests,
                 "errors": self.errors,
@@ -200,6 +203,41 @@ class Diagnostics:
                 data["threads"] = threading.active_count()
                 data["python"] = sys.version.split()[0]
         return data
+
+    def clear(self) -> dict:
+        """Empty the two log files and the error history they fed.
+
+        The previous content is moved aside to `.1` — the same rotation rule
+        :func:`_append_log` uses — so cleaning the panel can never destroy the
+        evidence of a crash.  Only the error side of the counters is reset;
+        `requests` and the status codes stay, because they count traffic and
+        not failures.
+        """
+        cleared: list[str] = []
+        freed = 0
+        with self.lock:
+            for path in (self.error_log, self.request_log):
+                if path is None:
+                    continue
+                try:
+                    size = path.stat().st_size if path.exists() else 0
+                except OSError:
+                    size = 0
+                if size <= 0:
+                    continue
+                try:
+                    os.replace(path, path.with_name(path.name + ".1"))
+                    path.write_bytes(b"")
+                except OSError:
+                    continue
+                cleared.append(str(path))
+                freed += size
+            self.errors = 0
+            self.slow = 0
+            self.last_error = None
+            self.recent.clear()
+        return {"ok": True, "cleared": cleared, "bytes": freed,
+                "log": str(self.error_log) if self.error_log else ""}
 
 
 # ---------------------------------------------------------------------------
@@ -440,6 +478,11 @@ class ChatService:
                 "library_backup_keep", library_job.DEFAULT_KEEP)))
         except (TypeError, ValueError):
             return library_job.DEFAULT_KEEP
+
+    def clear_diagnostics(self) -> dict:
+        """Empty the diagnostics log from the window (previous bytes to `.1`)."""
+        with self.lock:
+            return self.diagnostics.clear()
 
     # -- state ------------------------------------------------------------
 
@@ -966,6 +1009,35 @@ class ChatService:
             except (OSError, RuntimeError) as exc:
                 return {"state": "idle", "running": False, "error": str(exc)}
             return lyrics_job.status(self.root, str(job.get("id") or ""))
+
+    def lyrics_similar(self, rel: str = "", limit: int = 12) -> dict:
+        """Songs whose sung words resemble one song's — read-only.
+
+        Same seed rule as the panel: the named track, else the playing one.
+        No audio, no database edit; only the stored lyric text is compared.
+        """
+        with self.lock:
+            rel = str(rel or "").strip()
+            track = self.engine.catalog.track(rel) if rel else None
+            if track is None:
+                track = self.engine.ctx.current
+            if track is None:
+                return {"rel": "", "hits": [], "available": False,
+                        "error": "nothing is playing"}
+            record = self.engine.lyrics.track(track.rel)
+            if record is None:
+                return {"rel": track.rel, "title": track.name,
+                        "artist": track.who, "hits": [], "available": False}
+            try:
+                count = int(limit or 12)
+            except (TypeError, ValueError):
+                count = 12
+            hits = self.engine.lyrics.similar(
+                track.rel, limit=max(1, min(40, count)))
+            return {"rel": track.rel,
+                    "title": record["title"] or track.name,
+                    "artist": record["artist"] or track.who,
+                    "available": True, "hits": hits}
 
     def lyrics_offset(self, rel: str = "", value=None,
                       relative: bool = False) -> dict:
@@ -2535,6 +2607,14 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(self.service.chat(message))
             return
+        if path == "/api/diagnostics":
+            action = str(data.get("action") or "clear").strip().lower()
+            if action not in ("clear", "clean", "cleanup"):
+                self._json({"error": f"unknown diagnostics action {action!r}"},
+                           400)
+                return
+            self._json(self.service.clear_diagnostics())
+            return
         if path == "/api/transport":
             self._json(self.service.transport(str(data.get("action") or ""),
                                               data.get("value")))
@@ -2640,6 +2720,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(self.service.lyrics_offset(
                     str(data.get("rel") or ""), value,
                     bool(data.get("relative"))))
+                return
+            if action in {"similar", "like"}:
+                try:
+                    limit = int(data.get("limit") or 12)
+                except (TypeError, ValueError):
+                    limit = 12
+                self._json(self.service.lyrics_similar(
+                    str(data.get("rel") or ""), limit))
                 return
             self._json({"error": f"unknown lyrics action: {action}"}, 400)
             return
@@ -2859,7 +2947,7 @@ def open_window(url: str) -> bool:
             continue
         try:
             subprocess.Popen(
-                [binary, f"--app={url}", "--window-size=1280,880",
+                [binary, f"--app={url}", "--window-size=1440,960",
                  "--class=julians-music-app", "--name=julians-music-app"],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 start_new_session=True)

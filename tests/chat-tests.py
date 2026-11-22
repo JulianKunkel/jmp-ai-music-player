@@ -51,6 +51,7 @@ from chat import stats as library_stats            # noqa: E402
 from chat import radio as radio_mod                 # noqa: E402
 from chat import endless as endless_mod             # noqa: E402
 from chat.web import ChatService, make_handler, md_to_html  # noqa: E402
+import mpvctl as mpv_client                        # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -2495,6 +2496,32 @@ def check_pwa(work: Path) -> None:
         shutil.rmtree(lib, ignore_errors=True)
 
 
+def check_window() -> None:
+    """The native window opens large enough and cannot be shrunk to clip.
+
+    The settings panel is a 940 px modal with eight tabs and a sticky Save row;
+    a window that starts at 1280×880 clipped it on a smaller screen.  These are
+    source checks on purpose: opening a real GTK window needs a display, while
+    the numbers and the two enforcement points are what regress.
+    """
+    source = (LIB / "chat" / "window.py").read_text(encoding="utf-8")
+    check("the window opens larger than before",
+          "WINDOW_SIZE = (1440, 960)" in source, source[:200])
+    check("the window has a minimum size",
+          "MIN_SIZE = (1024, 640)" in source, source[:200])
+    check("both backends enforce the minimum size",
+          source.count("set_size_request(*MIN_SIZE)") == 2,
+          str(source.count("set_size_request(*MIN_SIZE)")))
+    web = (LIB / "chat" / "web.py").read_text(encoding="utf-8")
+    check("the browser fallback opens the same size",
+          "--window-size=1440,960" in web,
+          str([ln for ln in web.splitlines() if "window-size" in ln][:2]))
+    installer = (LIB.parent / "install.sh").read_text(encoding="utf-8")
+    check("the docker launcher's browser window matches",
+          installer.count("--window-size=1440,960") == 1,
+          str(installer.count("--window-size=1440,960")))
+
+
 def check_journey(work: Path) -> None:
     """One realistic window session, from first paint to a saved playlist.
 
@@ -4039,6 +4066,24 @@ def check_endless(work: Path) -> None:
               "Playlists/Own exists")
     finally:
         service.engine.close()
+
+    # -- an mpv error can name a float argument --------------------------
+    class _SilentSocket:
+        def sendall(self, data):        # mpv is stubbed: nothing listens
+            return None
+
+    client = mpv_client.Mpv()
+    client._sock = _SilentSocket()
+    client._readline = lambda: {"request_id": 1,
+                               "error": "loading failed", "data": None}
+    try:
+        client.cmd("seek", 12.5, "absolute")
+        message = ""
+    except mpv_client.MpvError as err:
+        message = str(err)
+    check("an mpv error reports a float argument",
+          "loading failed" in message and "12.5" in message, message)
+
     engine.close()
 
 
@@ -4477,6 +4522,11 @@ def check_http(root: Path) -> None:
               diagnostics.get("uptime_s", -1) >= 0
               and diagnostics.get("requests", 0) >= 3
               and diagnostics.get("pid"), str(diagnostics)[:300])
+        started_at = float(diagnostics.get("started_at") or 0)
+        check("diagnostics names the wall-clock start",
+              started_at > 0 and abs(time.time() - started_at
+                                     - diagnostics.get("uptime_s", 0)) < 5,
+              f"started_at={started_at} uptime={diagnostics.get('uptime_s')}")
         check("diagnostics lists the response codes",
               "500" in (diagnostics.get("codes") or {}),
               str(diagnostics.get("codes"))[:200])
@@ -4494,6 +4544,39 @@ def check_http(root: Path) -> None:
         check("state carries a compact diagnostics block",
               (state.get("diagnostics") or {}).get("requests", 0) >= 3,
               str(state.get("diagnostics"))[:300])
+
+        # cleaning the log from the window: the content moves to `.1`, the
+        # error counters restart, the traffic counters stay
+        before = diagnostics.get("requests", 0)
+        code, body = post("/api/diagnostics", {"action": "clear"})
+        cleared = {}
+        try:
+            cleared = json.loads(body)
+        except ValueError:
+            pass
+        check("the window can clean up the log",
+              code == 200 and cleared.get("ok")
+              and cleared.get("bytes", 0) > 0, body[:200])
+        kept = log_path.with_name(log_path.name + ".1")
+        check("the old log is kept as .1",
+              kept.is_file() and "planner exploded" in kept.read_text(
+                  encoding="utf-8"), str(kept))
+        check("the log itself is empty after the clean-up",
+              log_path.is_file() and log_path.stat().st_size == 0,
+              str(log_path))
+        after = get("/api/diagnostics")
+        check("cleaning up drops the error history",
+              after.get("errors") == 0 and after.get("last_error") is None,
+              str({k: after.get(k) for k in ("errors", "last_error")}))
+        check("cleaning up keeps the traffic counters",
+              after.get("requests", 0) >= before, str(after)[:200])
+        code, body = post("/api/diagnostics", {"action": "clear"})
+        check("a second clean-up finds nothing to do",
+              code == 200 and json.loads(body).get("cleared") == [], body[:200])
+        code, body = post("/api/diagnostics", {"action": "nonsense"})
+        check("an unknown diagnostics action is refused",
+              code == 400 and "unknown" in body, body[:200])
+
         ping = get("/api/ping")
         check("ping stays a cheap no-op", ping.get("ok") is True, str(ping)[:200])
     finally:
@@ -5691,6 +5774,126 @@ def main() -> int:
               str(lyrics_mod.word_forms("sea")))
         shutil.rmtree(word_root, ignore_errors=True)
 
+        # -- similar lyrics: a lexical neighbour, not a model --------------
+        # A TF-IDF comparison of the stored lyric words: the songs that share
+        # *rare* words are neighbours, a single "boat" is not enough, and a
+        # song without lyrics has none.
+        sim_root = Path(tempfile.mkdtemp(prefix="lyric-similar-"))
+        sfolder = sim_root / "library-work" / "app" / "lyrics"
+        sfolder.mkdir(parents=True)
+        sconn = _sqlite3.connect(sfolder / "lyrics.db")
+        sconn.executescript("""
+            CREATE TABLE track (rel_path TEXT PRIMARY KEY, title TEXT,
+                artist TEXT, album TEXT, duration_s REAL, language TEXT,
+                model TEXT, backend TEXT, source_size INTEGER,
+                source_mtime TEXT, transcribed_at TEXT,
+                line_count INTEGER DEFAULT 0, text TEXT);
+            CREATE TABLE line (rel_path TEXT NOT NULL, idx INTEGER NOT NULL,
+                start_s REAL, end_s REAL, text TEXT NOT NULL,
+                PRIMARY KEY (rel_path, idx));
+            CREATE VIRTUAL TABLE line_fts USING fts5(
+                text, rel_path UNINDEXED, idx UNINDEXED, start_s UNINDEXED,
+                end_s UNINDEXED);
+        """)
+        sim_tracks = {
+            metal_rel: ("Track 1", "Eisenwerk", [
+                "we sail the boat across the burning sea",
+                "the engines roar and nothing stops us now",
+                "a boat of steel and fire"]),
+            "Artists/Steelworks/Forge/01_Anvil.mp3": ("Anvil", "Steelworks", [
+                "the steel and the fire in the forge",
+                "the engines roar again"]),
+            "Artists/Furnace/Night/01_Ember.mp3": ("Ember", "Furnace", [
+                "fire burns in the furnace all night",
+                "the engines hum"]),
+        }
+        for rel, (title, artist, lines) in sim_tracks.items():
+            sconn.execute(
+                "INSERT INTO track(rel_path, title, artist, album, duration_s,"
+                " line_count, text) VALUES(?,?,?,?,?,?,?)",
+                (rel, title, artist, "Album", 60.0, len(lines),
+                 " ".join(lines)))
+            for idx, text_line in enumerate(lines):
+                sconn.execute("INSERT INTO line VALUES(?,?,?,?,?)",
+                              (rel, idx, idx * 5.0, idx * 5.0 + 4.0,
+                               text_line))
+        sconn.commit()
+        sconn.close()
+        similar_db = lyrics_mod.Lyrics(sim_root)
+        neighbours = similar_db.similar(metal_rel)
+        check("similar lyrics find the songs that share rare words",
+              len(neighbours) == 2
+              and neighbours[0]["rel"]
+              == "Artists/Steelworks/Forge/01_Anvil.mp3",
+              str(neighbours)[:300])
+        check("a neighbour names the words it shares",
+              {"steel", "fire"} <= set(neighbours[0]["shared"]),
+              str(neighbours[0].get("shared")))
+        check("a neighbour quotes a line with a shared word",
+              "fire" in neighbours[0]["line"].casefold(), str(neighbours[0]))
+        check("the seed is never its own neighbour",
+              all(hit["rel"] != metal_rel for hit in neighbours))
+        check("a song without lyrics has no neighbours",
+              similar_db.similar("Artists/Nobody/Nothing/01_X.mp3") == [])
+
+        real_lyrics = engine.lyrics
+        real_current = engine.ctx.current
+        try:
+            engine.lyrics = similar_db
+            engine.ctx.current = engine.catalog.track(metal_rel)
+            reply = engine.handle("find songs with similar lyrics")
+            text = clean_text(reply)
+            check("chat finds songs with similar lyrics",
+                  reply.tool == "lyrics · similar" and "Steelworks" in text
+                  and "% word overlap" in text,
+                  f"{reply.tool}: {text[:300]}")
+            check("chat names the shared words",
+                  "shared:" in text and "steel" in text.casefold(), text[:400])
+            reply = engine.handle("more songs like this lyrically")
+            check("“like this lyrically” is the same search",
+                  reply.tool == "lyrics · similar"
+                  and "Steelworks" in clean_text(reply),
+                  f"{reply.tool}: {clean_text(reply)[:200]}")
+            reply = engine.handle("similar lyrics to Federleicht")
+            check("a named song without lyrics answers honestly",
+                  reply.tool == "lyrics · similar"
+                  and "no lyrics" in clean_text(reply).casefold(),
+                  clean_text(reply)[:200])
+        finally:
+            engine.lyrics = real_lyrics
+            engine.ctx.current = real_current
+
+        service_lyrics = service.engine.lyrics
+        service_current = service.engine.ctx.current
+        try:
+            service.engine.lyrics = similar_db
+            service.engine.ctx.current = service.engine.catalog.track(metal_rel)
+            api = service.lyrics_similar(metal_rel)
+            check("the window API returns the same neighbours",
+                  api.get("available") is True and len(api.get("hits") or []) == 2
+                  and api["hits"][0]["rel"]
+                  == "Artists/Steelworks/Forge/01_Anvil.mp3",
+                  str(api)[:250])
+            api = service.lyrics_similar(
+                "Artists/Steelworks/Forge/01_Anvil.mp3")
+            check("an unknown rel falls back to the playing song",
+                  api.get("rel") == metal_rel
+                  and len(api.get("hits") or []) == 2, str(api)[:250])
+            service.engine.ctx.current = None
+            missing = service.lyrics_similar("")
+            check("the window API answers honestly without a seed",
+                  missing.get("available") is False
+                  and bool(missing.get("error")), str(missing)[:200])
+        finally:
+            service.engine.lyrics = service_lyrics
+            service.engine.ctx.current = service_current
+        sound_plan = nlu_plan("play songs that sound similar", engine.ctx,
+                              engine.catalog)
+        check("a sound-similarity sentence is not a lyric search",
+              sound_plan is None or sound_plan.skill != "lyrics",
+              str(sound_plan)[:200])
+        shutil.rmtree(sim_root, ignore_errors=True)
+
         # "how many songs do I have" shares the word *have* with "songs that
         # have a boat", but it counts the library: it must not search the
         # lyrics for the phrase "how many".
@@ -6301,6 +6504,7 @@ def main() -> int:
         check_endless(work)
         check_explain(work)
         check_pwa(work)
+        check_window()
         check_journey(work)
         check_library_data(work)
 

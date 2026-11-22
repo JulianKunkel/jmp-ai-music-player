@@ -34,15 +34,23 @@ reorders them by the measured profile axes.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import sqlite3
+from collections import Counter
 from pathlib import Path
 
 #: how far a track's lyrics may be moved, in seconds.  A transcription guesses
 #: where a line begins; it is not a re-edit of the song, so a large shift is a
 #: mistake, not a preference.
 MAX_OFFSET = 30.0
+
+#: cosine similarity under which two songs share no real theme: with TF-IDF
+#: weights a couple of rare words in two four-minute songs land at 0.05–0.15,
+#: while a shared chorus reaches 0.3 and more.  Two songs must also share at
+#: least two words, so a single "baby" cannot link them.
+MIN_LYRIC_SIMILARITY = 0.06
 
 #: the same stopword list the transcribing tool uses, so both agree
 STOPWORDS = {
@@ -429,6 +437,120 @@ class Lyrics:
         ordered = sorted(best.values(),
                          key=lambda hit: (-hit["mentions"], hit["score"]))
         return ordered[:max(1, int(limit))]
+
+    # -- similar lyrics ----------------------------------------------------
+
+    def similar(self, rel: str, limit: int = 12, min_shared: int = 2
+                ) -> list[dict]:
+        """Other songs whose sung words resemble this one's.
+
+        A TF-IDF vector over the stored lyric tokens of every transcribed
+        song, cosine-compared with the seed: a word that appears in most
+        songs ("ich", "the", "you") carries almost no weight, a rare one
+        carries a lot.  A result must share at least `min_shared` words, so
+        a single "baby" cannot make two songs related, and a result needs a
+        real score above `MIN_LYRIC_SIMILARITY`.
+
+        No model is involved and no audio is read: this is a lexical
+        comparison of the words the transcriber already stored.
+        """
+        seed = self.track(rel)
+        if seed is None or not seed.get("text"):
+            return []
+        conn = self._connect()
+        if conn is None:
+            return []
+        try:
+            rows = conn.execute(
+                "SELECT rel_path, title, artist, album, duration_s, text "
+                "FROM track WHERE text IS NOT NULL AND length(text) > 40"
+            ).fetchall()
+        except sqlite3.Error:
+            return []
+        documents: list[tuple[sqlite3.Row, Counter]] = []
+        frequency: Counter[str] = Counter()
+        for row in rows:
+            counts = Counter(query_tokens(row["text"]))
+            if counts:
+                documents.append((row, counts))
+                frequency.update(counts.keys())
+        if len(documents) < 2:
+            conn.close()
+            return []
+        total = len(documents)
+        # a word in every song explains nothing; a rare one explains a lot
+        weights = {word: math.log((total + 1) / (count + 1)) + 1.0
+                   for word, count in frequency.items()}
+
+        def vector(counts: Counter) -> dict[str, float]:
+            weighted = {word: count * weights.get(word, 1.0)
+                        for word, count in counts.items()}
+            length = math.sqrt(sum(value * value
+                                   for value in weighted.values())) or 1.0
+            return {word: value / length for word, value in weighted.items()}
+
+        seed_vector = vector(Counter(query_tokens(seed["text"])))
+        scored: list[tuple[float, list[str], sqlite3.Row]] = []
+        for row, counts in documents:
+            if row["rel_path"] == rel:
+                continue
+            candidate = vector(counts)
+            shared = [word for word in seed_vector if word in candidate]
+            if len(shared) < max(1, int(min_shared)):
+                continue
+            score = sum(seed_vector[word] * candidate[word] for word in shared)
+            if score <= MIN_LYRIC_SIMILARITY:
+                continue
+            # the words that carried the match, strongest first
+            shared.sort(key=lambda word: -(seed_vector[word] * candidate[word]))
+            scored.append((score, shared, row))
+        scored.sort(key=lambda item: -item[0])
+        picked = scored[:max(1, int(limit))]
+        conn.close()
+        return self._similar_rows(picked, rel)
+
+    def _similar_rows(self, picked, seed_rel: str) -> list[dict]:
+        """Attach one representative line to every similar song."""
+        if not picked:
+            return []
+        paths = [row["rel_path"] for _score, _shared, row in picked]
+        offsets = read_offsets(self.root)
+        lines: dict[str, list[tuple[float, str]]] = {path: [] for path in paths}
+        conn = self._connect()
+        if conn is not None:
+            try:
+                marks = ",".join("?" for _ in paths)
+                for row in conn.execute(
+                        f"SELECT rel_path, start_s, text FROM line "
+                        f"WHERE rel_path IN ({marks}) ORDER BY rel_path, idx",
+                        paths):
+                    lines[row["rel_path"]].append(
+                        (float(row["start_s"] or 0.0), row["text"] or ""))
+            except sqlite3.Error:
+                pass
+            finally:
+                conn.close()
+        out: list[dict] = []
+        for score, shared, row in picked:
+            shift = offsets.get(row["rel_path"], 0.0)
+            chosen = ""
+            start = 0.0
+            for line_start, text in lines.get(row["rel_path"], []):
+                if any(_word_in(word, text) for word in shared):
+                    chosen, start = text, max(0.0, line_start + shift)
+                    break
+            out.append({
+                "rel": row["rel_path"],
+                "title": row["title"] or "",
+                "artist": row["artist"] or "",
+                "album": row["album"] or "",
+                "duration": float(row["duration_s"] or 0),
+                "score": round(float(score), 4),
+                "shared": shared[:6],
+                "line": chosen,
+                "start": start,
+            })
+        return out
 
     def _hit(self, row: sqlite3.Row, tokens: list[str]) -> dict:
         text = row["text"]

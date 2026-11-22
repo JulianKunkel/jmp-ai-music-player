@@ -94,7 +94,10 @@ class Mpv:
             if message.get("request_id") != self._id:
                 continue                      # an event, not our reply
             if message.get("error") != "success":
-                raise MpvError(f"{message.get('error')}: {' '.join(args)}")
+                # str() every argument: `seek`/`speed`/`volume` carry floats,
+                # and a plain join would raise TypeError instead of the mpv error
+                detail = " ".join(str(arg) for arg in args)
+                raise MpvError(f"{message.get('error')}: {detail}")
             return message.get("data")
 
     def get(self, prop: str, default=None):

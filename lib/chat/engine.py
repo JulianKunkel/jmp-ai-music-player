@@ -4025,6 +4025,8 @@ class Engine:
             return self._lyrics_setup(args)
         if action in {"export", "lrc", "save-lrc", "save_lrc", "sidecar"}:
             return self._lyrics_export(args)
+        if action in {"similar", "like", "alike", "related", "verwandt"}:
+            return self._lyrics_similar(args)
         if action in {"offset", "shift", "align", "timing", "nudge"}:
             return self._lyrics_offset(args)
         if action in {"now", "current", "line", "playing"}:
@@ -4202,6 +4204,70 @@ class Engine:
         self.ctx.last_tracks = tracks
         self.ctx.last_query = words
         return Reply("\n".join(lines), tracks=tracks, tool="lyrics · search")
+
+    def _lyrics_similar(self, args: dict) -> Reply:
+        """Songs whose sung words resemble the seed's, without a model.
+
+        The seed is the named track, else the one that is playing: "find
+        songs with similar lyrics to X" and "more songs like this
+        lyrically" both land here.  A song needs lyrics to be the seed and a
+        second transcribed song to be a neighbour, so the answer says
+        exactly what was compared instead of guessing.
+        """
+        track = self._lyric_track(args)
+        if track is None:
+            return Reply("Play a song, or name one — then I can look for songs "
+                         "whose lyrics resemble it.", error=True)
+        record = self.lyrics.track(track.rel)
+        if record is None:
+            return Reply(
+                f"**{_escape(track.who)} — {_escape(track.name)}** has no "
+                "lyrics yet, so there is nothing to compare.\n\n"
+                + self._lyrics_backend_hint(), tool="lyrics · similar")
+        try:
+            limit = int(args.get("limit") or 12)
+        except (TypeError, ValueError):
+            limit = 12
+        limit = max(1, min(40, limit))
+        hits = self.lyrics.similar(track.rel, limit=limit)
+        summary = self.lyrics.summary()
+        head = (f"**Lyrics like {_escape(record['artist'] or track.who)} — "
+                f"{_escape(record['title'] or track.name)}**")
+        if not hits:
+            return Reply(
+                head + "\n\nNo other transcribed song shares enough words with "
+                f"it.  {summary['tracks']:,} songs have lyrics so far; a "
+                "closer match can appear once more of the library is "
+                "transcribed.\n\n"
+                "Ask me to “transcribe the missing lyrics” and the background "
+                "job fills the rest in.", tool="lyrics · similar")
+
+        tracks: list[Track] = []
+        lines = [head + f" · {len(hits)} song{'s' if len(hits) != 1 else ''}",
+                 "", "_Word-by-word comparison of the stored lyrics; a word "
+                 "that appears everywhere counts little, a rare one a lot.  "
+                 f"{summary['tracks']:,} songs were compared._", ""]
+        for number, hit in enumerate(hits, 1):
+            title = hit.get("title") or Path(hit["rel"]).stem
+            artist = hit.get("artist") or ""
+            percent = round(float(hit.get("score") or 0) * 100)
+            lines.append(
+                f"{number}. **{_escape(artist + ' — ' if artist else '')}"
+                f"{_escape(title)}**  ·  {percent} % word overlap")
+            if hit.get("shared"):
+                lines.append("   shared: " + _escape(", ".join(hit["shared"])))
+            if hit.get("line"):
+                lines.append(f"   `{lyric_clock(hit.get('start') or 0)}`  "
+                             f"_{_escape(hit['line'])}_")
+            lines.append(f"   `{hit['rel']}`")
+            found = self.catalog.track(hit["rel"])
+            if found is not None:
+                tracks.append(found)
+        if tracks:
+            lines += ["", "Say “play number 1” to hear one, or “save that as "
+                          "<name>” to keep the list."]
+        self.ctx.last_tracks = tracks
+        return Reply("\n".join(lines), tracks=tracks, tool="lyrics · similar")
 
     # -- the .lrc sidecar and the timing shift ----------------------------
 

@@ -24,7 +24,13 @@ import sys
 
 APP_ID = "julians-music-app"
 APP_TITLE = "JulAIn Music Player"
-WINDOW_SIZE = (1280, 880)
+#: the size the window opens with: wide enough for the 940 px settings modal
+#: and tall enough for the eight tabs plus the sticky Save row
+WINDOW_SIZE = (1440, 960)
+#: the smallest size that still shows every control (the modal itself scrolls
+#: below 760 px of height, so 640 is honest on a 768 px laptop screen); the
+#: window refuses to go below it instead of clipping the settings panel
+MIN_SIZE = (1024, 640)
 
 
 def _versions(namespace: str) -> set[str]:
@@ -107,6 +113,9 @@ def _gtk3(url: str) -> None:
     window = Gtk.Window()
     window.set_title(APP_TITLE)
     window.set_default_size(*WINDOW_SIZE)
+    # a minimum size, so shrinking the window cannot clip the tabs or the
+    # settings panel; GTK asks the toplevel before it lets the WM resize it
+    window.set_size_request(*MIN_SIZE)
     window.set_icon_name(APP_ID)
     window.connect("destroy", Gtk.main_quit)
     view = WebKit2.WebView()
@@ -135,6 +144,9 @@ def _gtk4(url: str) -> None:
     window = Gtk.Window()
     window.set_title(APP_TITLE)
     window.set_default_size(*WINDOW_SIZE)
+    # a minimum size, so shrinking the window cannot clip the tabs or the
+    # settings panel; GTK asks the toplevel before it lets the WM resize it
+    window.set_size_request(*MIN_SIZE)
     window.set_icon_name(APP_ID)
     view = WebKit.WebView()
     try:

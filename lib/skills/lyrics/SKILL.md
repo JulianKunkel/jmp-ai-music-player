@@ -2,7 +2,7 @@
 name: lyrics
 description: Show a song's lyrics line by line, find songs by a half-remembered line, or transcribe songs locally with Whisper.
 example: something with a boat and fast
-triggers: lyrics, lyric, songtext, songtexte, liedtext, gesangstext, textzeile, line, verse, lyrics of, what are the lyrics, show the lyrics, list the lyrics, read the lyrics, words of this song, sing along, which line is playing, where are we in the lyrics, next line, songs about, mentions, erwähnt, transcribe, transkribiere, transcribe the lyrics of <file>, transcription, untertitel, subtitles, speech to text, how is the transcription going, transcribe the library
+triggers: lyrics, lyric, songtext, songtexte, liedtext, gesangstext, textzeile, line, verse, lyrics of, what are the lyrics, show the lyrics, list the lyrics, read the lyrics, words of this song, sing along, which line is playing, where are we in the lyrics, next line, songs about, mentions, erwähnt, similar lyrics, ähnliche songtexte, more like this lyrically, transcribe, transkribiere, transcribe the lyrics of <file>, transcription, untertitel, subtitles, speech to text, how is the transcription going, transcribe the library
 ---
 # Lyrics
 
@@ -37,6 +37,15 @@ lyrics website.
   those hits by the Speed axis (and any other property: slow, aggressive,
   happy, electronic, quiet, …).  The words pick the songs, the profile orders
   them; a track with no measurement keeps its lyric order at the end.
+- **similar** — songs whose sung words resemble one song's: "find songs with
+  similar lyrics", "more songs like this lyrically", "ähnliche songtexte",
+  "similar lyrics to <song>".  The seed is the playing track (or the one named
+  after "to"/"wie"); every transcribed song is compared with it by a TF-IDF
+  cosine over the stored lyric words, so a word that appears everywhere counts
+  little and a rare one a lot.  A neighbour must share at least two words, the
+  reply names the shared words, quotes one line and shows the overlap in
+  percent — no model, no audio, no database edit.  "play songs that sound
+  similar" is *not* this: a sound request stays the profile ranking.
 - **transcribe** — starts the background job for the current song, for a named
   one ("transcribe the lyrics of Merlin_wooden.mp3", a title, or a path), or
   for the next songs that have no lyrics yet (`all`/`missing`), optionally
@@ -66,9 +75,10 @@ does not produce the same sentence forty times.
 `#lyrics-toggle` in the Now-playing header shows and hides the panel; the
 sparkle button transcribes the current song and `+` queues the next ones.
 API: `GET /api/lyrics?rel=…`, `GET /api/lyrics/update`,
+`POST /api/lyrics {"action": "similar", "rel"}`,
 `POST /api/lyrics/transcribe {rel|missing, refresh}`,
 `POST /api/lyrics/setup {cpu}`; `/api/state` carries `lyrics`
 (transcribed count, backend, job progress) and the `lyrics_panel` setting.
 
-Arguments: `action` (show|now|next|search|transcribe|setup|status), `track`,
-`terms`, `limit`, `refresh`, `all`.
+Arguments: `action` (show|now|next|search|similar|transcribe|setup|status),
+`track`, `terms`, `limit`, `refresh`, `all`.
