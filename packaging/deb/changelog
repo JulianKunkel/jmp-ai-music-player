@@ -1,3 +1,14 @@
+jmp-ai-music-player (1.1.8-1) unstable; urgency=medium
+
+  * Fix "Continue" landing on silence when the remembered queue was longer
+    than the one mpv really held: the saved entry index was applied without
+    checking that the entry exists, so mpv jumped past the end and stopped.
+  * The jump is now sent only when the queue really has that entry, so a
+    pruned ad-hoc list or an edited playlist still continues at its first
+    track instead of playing nothing.
+
+ -- Julian M. Kunkel <julian.kunkel@gwdg.de>  Sun, 22 Nov 2026 18:50:00 +0100
+
 jmp-ai-music-player (1.1.7-1) unstable; urgency=medium
 
   * The media row of this keyboard is stop, rewind, play/pause, forward on

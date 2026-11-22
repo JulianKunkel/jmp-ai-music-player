@@ -1107,7 +1107,12 @@ class Engine:
                 break
             time.sleep(0.1)
         if index > 0:
-            self.player.command("position", index + 1)
+            # only when that entry really exists: a stale session index (the
+            # queue of last time was longer) would make mpv jump past its end
+            # and stop, which looked like "Continue" playing nothing
+            now = self.player.status() or {}
+            if int(now.get("playlist_count") or 0) > index:
+                self.player.command("position", index + 1)
         if position > 2:
             if rel:
                 for _ in range(15):

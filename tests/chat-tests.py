@@ -705,6 +705,27 @@ def check_session(engine, root: Path) -> None:
         check("Continue answers with what it started",
               "Track 2" in reply.text and reply.played, reply.text[:200])
 
+        # -- a stale index never jumps past a shorter queue ------------------
+        # the remembered queue of last time can be longer than the one mpv
+        # really holds (a pruned ad-hoc list, a playlist edited since); an
+        # unconditional "position 10" then landed the player on an entry that
+        # does not exist, so Continue ended idle with one entry left.
+        session.save(root, {"kind": "track", "target": track,
+                            "entries": [track], "label": "one track",
+                            "rel": track, "position": 0, "duration": 180,
+                            "index": 9, "count": 10,
+                            "artist": "Eisenwerk", "title": "Track 2"})
+        fake = FakePlayer({"idle": False, "file": "", "playlist_count": 1,
+                           "playlist_pos": 0, "time": 0, "duration": 0})
+        engine.player = fake
+        engine.resume_last()
+        jumps = [value for action, value in fake.commands
+                 if action == "position"]
+        check("Continue never jumps past the end of a shorter queue",
+              jumps == [], str(fake.commands)[:300])
+        check("Continue still plays the remembered track",
+              bool(fake.played), str(fake.played)[:200])
+
         # -- a temp queue is rebuilt when its file was pruned ---------------
         session.save(root, {"kind": "temp", "target":
                             "library-work/app/chat/queues/gone.m3u8",
