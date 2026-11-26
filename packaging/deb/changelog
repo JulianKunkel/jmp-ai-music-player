@@ -1,3 +1,24 @@
+jmp-ai-music-player (1.2.14-1) unstable; urgency=medium
+
+  * An update no longer leaves the old code running behind the window.  The
+    window compares the release the server loaded with the one the files on
+    disk carry on every status poll, and when they differ it asks the server
+    to replace itself.  The process re-executes the same command with the same
+    pid, port and token; the open page waits for it and reloads once.  No
+    process hunting, no reopened window — and playback plus a running
+    measurement continue, because mpv and the detached jobs are separate
+    processes.
+  * Only a real `music chat --web` invocation may restart itself.  A server
+    started by a test or a script answers 409 and says to start the app again,
+    and the page makes one attempt per installed release per browser session,
+    so a build that cannot load can never reload in a loop.
+  * The comparison rides on `/api/status` (one stat per poll) and on the
+    read-only `/api/restart`; the version answer now names a newer install
+    instead of repeating the number the process loaded.
+  * No tag, playlist, journal or audio file is written.
+
+ -- Julian Kunkel <julian@kunkel.de>  Thu, 26 Nov 2026 23:45:00 +0100
+
 jmp-ai-music-player (1.2.13-1) unstable; urgency=medium
 
   * The net diagram's neighbour list follows the profile database instead of

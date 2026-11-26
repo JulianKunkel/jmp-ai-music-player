@@ -449,7 +449,8 @@ def cmd_chat(args) -> int:
                        port=int(getattr(args, "port", 0) or 0),
                        use_llm=use_llm, dry_run=dry_run,
                        open_browser=not getattr(args, "no_open", False),
-                       idle_exit=int(getattr(args, "idle_exit", 0) or 0))
+                       idle_exit=int(getattr(args, "idle_exit", 0) or 0),
+                       token=str(getattr(args, "token", "") or ""))
 
     interactive = sys.stdin.isatty() and sys.stdout.isatty()
     if not message and not getattr(args, "plain", False) and interactive:
@@ -609,6 +610,9 @@ so every option of that tool works unchanged:
                    help="with --web: print the URL instead of opening a window")
     p.add_argument("--idle-exit", type=int, default=0, metavar="SECONDS",
                    help="with --web: stop after this long without a request")
+    # internal: a restart re-executes the same command, and the open window
+    # carries this token in its URL, so it has to survive the replacement
+    p.add_argument("--token", default="", help=argparse.SUPPRESS)
     p.add_argument("--plain", action="store_true",
                    help="line-based chat instead of the full-screen app")
     p.add_argument("--no-llm", action="store_true",

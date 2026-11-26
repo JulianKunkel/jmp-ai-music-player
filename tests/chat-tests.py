@@ -4666,6 +4666,332 @@ def check_version(work: Path) -> None:
           '"$APP_DIR/VERSION"' in install, "")
 
 
+def check_restart(work: Path) -> None:
+    """An installed upgrade restarts the running server — same pid, same port.
+
+    The window can be newer than the Python behind it: a package upgrade
+    replaces files, not a running process.  The status poll compares the number
+    the process loaded with the one on disk, and the server re-executes itself
+    when they differ, so nobody has to hunt for a pid.  Everything here is a
+    throwaway copy: no real server, no real port, no real install.
+    """
+    from chat import version
+    from chat import web
+
+    lib = work / "restart-library"
+    if lib.exists():
+        shutil.rmtree(lib)
+    build_library(lib)
+
+    saved_candidates = version._candidates
+    saved_cache = dict(version._cache)
+    saved_disk = dict(version._disk_cache)
+    saved_restart = dict(web._RESTART)
+    saved_scheduler = web.schedule_restart
+
+    fake = work / "restart-VERSION"
+    fake.write_text("1.0.0\n", encoding="utf-8")
+    version._candidates = lambda: [fake]
+    version._cache.clear()
+    version._disk_cache.clear()
+    web._RESTART.clear()
+
+    httpd = None
+    service = None
+    try:
+        # -- the two numbers: what this process loaded, what the files hold ---
+        check("the process keeps the release it loaded",
+              version._read() == ("1.0.0", str(fake)), str(version._read()))
+        check("the disk reader agrees before an upgrade",
+              version.on_disk()[0] == "1.0.0", str(version.on_disk()))
+        check("nothing is stale while both numbers agree",
+              version.status()["stale"] is False, str(version.status()))
+
+        fake.write_text("1.0.1-beta\n", encoding="utf-8")
+        check("a freshly installed release shows on disk at once",
+              version.on_disk()[0] == "1.0.1-beta", str(version.on_disk()))
+        state = version.status()
+        check("the running release does not change under a live process",
+              state["running"] == "1.0.0", str(state))
+        check("status calls the older process stale",
+              state["stale"] is True and state["disk"] == "1.0.1-beta"
+              and state["file"] == str(fake), str(state))
+        info = version.info()
+        check("info() carries both releases",
+              info["version"] == "1.0.0" and info["on_disk"] == "1.0.1-beta"
+              and info["stale"] is True, str(info))
+        text = version.markdown()
+        check("the version answer names the newer install",
+              "1.0.1-beta" in text and "start the app again" in text,
+              text[:400])
+        fake.write_text("app=jmp\n", encoding="utf-8")
+        check("an installer record is never shown as a release",
+              version.on_disk()[0] == version.UNKNOWN
+              and version.status()["stale"] is False, str(version.status()))
+
+        for index in range(12):       # the cache prunes, it does not grow
+            fake.write_text(f"1.0.{index + 3}\n", encoding="utf-8")
+            version.on_disk()
+        check("the disk cache does not grow without bound",
+              len(version._disk_cache) <= 9, str(len(version._disk_cache)))
+
+        # -- the command a restart runs --------------------------------------
+        fake.write_text("1.0.1-beta\n", encoding="utf-8")
+        web._RESTART.update({
+            "argv": ["/usr/lib/jmp/lib/music.py", "chat", "--web",
+                     "--port", "1234", "--no-open", "--token", "old"],
+            "port": 8899, "token": "tok-abc"})
+        check("a server started as the window may replace itself",
+              web.restart_available() is True and web.restart_reason() == "", "")
+        argv = web.restart_argv()
+        check("the restart command is the same app on the same port and token",
+              argv == [sys.executable, "/usr/lib/jmp/lib/music.py", "chat",
+                       "--web", "--no-open", "--port", "8899",
+                       "--token", "tok-abc"], str(argv))
+        check("the old port and token are not repeated",
+              argv.count("--port") == 1 and argv.count("--token") == 1
+              and "1234" not in argv and "old" not in argv, str(argv))
+
+        seen: dict = {}
+        done = threading.Event()
+
+        def fake_exec(path_: str, args: list) -> None:
+            seen["path"] = path_
+            seen["argv"] = list(args)
+            done.set()
+
+        web.schedule_restart(delay=0.01, execute=fake_exec)
+        check("the restart thread runs the rebuilt command",
+              done.wait(10) and seen.get("path") == sys.executable
+              and seen.get("argv") == argv, str(seen)[:300])
+
+        web._RESTART.clear()
+        check("a server a test started cannot replace itself",
+              web.restart_available() is False
+              and "music chat --web" in web.restart_reason(),
+              web.restart_reason())
+        raised = False
+        try:
+            web.restart_argv()
+        except RuntimeError:
+            raised = True
+        check("asking that server for a command is refused", raised, "")
+
+        # -- what the page reads and what it posts ---------------------------
+        service = ChatService(root=lib, use_llm=False, auto_psycho=False)
+        token = "restart-token-value"
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0),
+                                    make_handler(service, token))
+        httpd.daemon_threads = True
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{httpd.server_address[1]}"
+
+        def call(path: str, payload=None) -> tuple[int, dict]:
+            url = f"{base}{path}?t={token}"
+            if payload is None:
+                request = urllib.request.Request(url)
+            else:
+                request = urllib.request.Request(
+                    url, data=json.dumps(payload).encode(),
+                    headers={"Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(request, timeout=15) as res:
+                    return res.status, json.loads(res.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                raw = exc.read().decode("utf-8", "replace")
+                try:
+                    return exc.code, json.loads(raw)
+                except ValueError:
+                    return exc.code, {"error": raw}
+            except Exception as exc:          # noqa: BLE001
+                return 0, {"error": f"{type(exc).__name__}: {exc}"}
+
+        code, body = call("/api/restart")
+        check("the restart route reports both releases",
+              code == 200 and body.get("running") == "1.0.0"
+              and body.get("disk") == "1.0.1-beta"
+              and body.get("stale") is True, f"{code} {str(body)[:200]}")
+        check("the status poll carries the comparison",
+              call("/api/status")[1].get("restart", {}).get("stale") is True, "")
+        check("the page state carries it too",
+              call("/api/state")[1].get("restart", {}).get("disk")
+              == "1.0.1-beta", "")
+
+        code, body = call("/api/restart", {})
+        check("a server that may not restart says so instead of dying",
+              code == 409 and body.get("restartable") is False
+              and "music chat --web" in str(body.get("error")),
+              f"{code} {str(body)[:200]}")
+
+        web._RESTART.update({"argv": ["/usr/lib/jmp/lib/music.py", "chat",
+                                      "--web"], "port": 8899,
+                             "token": token})
+        fake.write_text("1.0.0\n", encoding="utf-8")
+        code, body = call("/api/restart", {})
+        check("an up-to-date server restarts nothing",
+              code == 200 and body.get("restarted") is False
+              and "already" in str(body.get("note")),
+              f"{code} {str(body)[:200]}")
+
+        calls: list = []
+        web.schedule_restart = lambda delay=0.4, execute=None: calls.append(delay)
+        fake.write_text("1.0.2\n", encoding="utf-8")
+        code, body = call("/api/restart", {})
+        check("a stale server promises the restart and schedules it",
+              code == 200 and body.get("restarted") is True
+              and body.get("from") == "1.0.0" and body.get("to") == "1.0.2"
+              and body.get("pid") == os.getpid(),
+              f"{code} {str(body)[:200]}")
+        check("the restart is scheduled only after the answer is sent",
+              len(calls) == 1, str(calls))
+
+        # -- a real server really replaces itself ----------------------------
+        app = work / "restart-app"
+        if app.exists():
+            shutil.rmtree(app)
+        app.mkdir(parents=True)
+        shutil.copytree(LIB, app / "lib")
+        (app / "VERSION").write_text("1.0.0\n", encoding="utf-8")
+        live = work / "restart-e2e-library"
+        if live.exists():
+            shutil.rmtree(live)
+        (live / "Playlists").mkdir(parents=True)
+        (live / "library-work").mkdir(parents=True)
+
+        env = dict(os.environ)
+        env["MUSIC_LIBRARY"] = str(live)
+        env["JMP_NO_MEDIA_AGENT"] = "1"
+        log_path = work / "restart-e2e.log"
+        log = log_path.open("wb")
+        proc = subprocess.Popen(
+            [sys.executable, str(app / "lib" / "music.py"), "chat", "--web",
+             "--no-open", "--token", "e2e-token"],
+            env=env, stdout=log, stderr=subprocess.STDOUT,
+            start_new_session=True)
+        try:
+            state_path = live / "library-work" / "app" / "chat" / "server.json"
+            url = ""
+            for _ in range(150):
+                try:
+                    url = json.loads(state_path.read_text(encoding="utf-8"))["url"]
+                    break
+                except (OSError, ValueError, KeyError):
+                    time.sleep(0.1)
+            port = urllib.parse.urlparse(url).port if url else 0
+
+            def ask(path: str, payload=None, tries: int = 1) -> tuple[int, dict]:
+                last = ""
+                for _attempt in range(tries):
+                    if payload is None:
+                        request = urllib.request.Request(
+                            f"http://127.0.0.1:{port}{path}?t=e2e-token")
+                    else:
+                        request = urllib.request.Request(
+                            f"http://127.0.0.1:{port}{path}?t=e2e-token",
+                            data=json.dumps(payload).encode(),
+                            headers={"Content-Type": "application/json"})
+                    try:
+                        with urllib.request.urlopen(request,
+                                                    timeout=3) as res:
+                            return res.status, json.loads(
+                                res.read().decode("utf-8"))
+                    except urllib.error.HTTPError as exc:
+                        raw = exc.read().decode("utf-8", "replace")
+                        return exc.code, {"error": raw}
+                    except Exception as exc:  # noqa: BLE001
+                        last = f"{type(exc).__name__}: {exc}"
+                        time.sleep(0.1)
+                return 0, {"error": last}
+
+            check("the throwaway server started on a copied tree", bool(port),
+                  f"url={url!r} log={log_path.read_text(errors='replace')[-300:] if log_path.exists() else ''}")
+            if port:
+                code, body = ask("/api/state", tries=60)
+                check("it runs the release it copied",
+                      code == 200
+                      and body.get("version", {}).get("version") == "1.0.0",
+                      f"{code} {str(body)[:200]}")
+                pid_before = ask("/api/ping")[1].get("pid")
+                (app / "VERSION").write_text("1.0.1\n", encoding="utf-8")
+                code, body = ask("/api/status", tries=30)
+                check("a package install is noticed by the status poll",
+                      code == 200
+                      and body.get("restart", {}).get("stale") is True,
+                      str(body.get("restart"))[:200])
+                code, body = ask("/api/restart", {})
+                check("the server accepts the restart",
+                      code == 200 and body.get("restarted") is True
+                      and body.get("from") == "1.0.0"
+                      and body.get("to") == "1.0.1",
+                      f"{code} {str(body)[:200]}")
+                body = {}
+                deadline = time.time() + 25
+                while time.time() < deadline:
+                    code, body = ask("/api/state")
+                    if code == 200 and body.get("version", {}).get(
+                            "version") == "1.0.1":
+                        break
+                    time.sleep(0.2)
+                check("the restarted server runs the installed release",
+                      code == 200
+                      and body.get("version", {}).get("version") == "1.0.1",
+                      f"{code} {str(body)[:200]}")
+                check("the restart kept the pid, so port and token stay valid",
+                      ask("/api/ping")[1].get("pid") == pid_before, "")
+                saved = json.loads(state_path.read_text(encoding="utf-8"))
+                check("server.json still names the same pid and url",
+                      int(saved.get("pid") or 0) == pid_before
+                      and saved.get("url", "").endswith("?t=e2e-token"),
+                      str(saved)[:200])
+                time.sleep(0.6)            # the second request is after the handover
+                code, body = ask("/api/restart", {})
+                check("a second request has nothing left to do",
+                      code == 200 and body.get("restarted") is False,
+                      f"{code} {str(body)[:200]}")
+        finally:
+            try:
+                proc.terminate()
+                proc.wait(timeout=10)
+            except (OSError, subprocess.SubprocessError):
+                proc.kill()
+            log.close()
+    finally:
+        if httpd is not None:
+            httpd.shutdown()
+            httpd.server_close()
+        if service is not None:
+            service.engine.close()
+        version._candidates = saved_candidates
+        version._cache.clear()
+        version._cache.update(saved_cache)
+        version._disk_cache.clear()
+        version._disk_cache.update(saved_disk)
+        web._RESTART.clear()
+        web._RESTART.update(saved_restart)
+        web.schedule_restart = saved_scheduler
+
+    script = (LIB / "chat" / "webui" / "app.js").read_text(encoding="utf-8")
+    check("the status poll compares the releases on every tick",
+          "maybeRestart(status.restart)" in script, "")
+    check("the page asks for a restart only while the install is newer",
+          'typeof info !== "object" || !info.stale' in script, "")
+    check("one attempt per installed release per browser session",
+          "sessionStorage.getItem(RESTART_KEY) === disk" in script
+          and "sessionStorage.setItem(RESTART_KEY, disk)" in script, "")
+    check("the page waits for the same server to answer again",
+          'rawFetch("/api/ping"' in script and "location.reload()" in script, "")
+    check("a restart that cannot happen is said once, not in a loop",
+          "start the app" in script and "notice:${disk}" in script, "")
+    check("the reload confirms the new release",
+          "Updated to ${upgraded}" in script
+          and "sessionStorage.setItem(RESTART_DONE, disk)" in script, "")
+
+    music = (LIB / "music.py").read_text(encoding="utf-8")
+    check("the CLI can be re-executed with the same token",
+          'p.add_argument("--token"' in music
+          and 'token=str(getattr(args, "token"' in music, "")
+
+
 def check_track_state(work: Path) -> None:
     """What the *playing* track still lacks — not a library-wide count."""
     import sqlite3
@@ -8471,6 +8797,7 @@ def main() -> int:
         check_tagedit(work)
         check_cover(work)
         check_version(work)
+        check_restart(work)
         check_track_state(work)
         check_smart(work)
         check_stats(work)

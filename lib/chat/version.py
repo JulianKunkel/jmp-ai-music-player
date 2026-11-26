@@ -6,8 +6,14 @@ package and ``/opt/music/VERSION`` in the container image.  Nothing else keeps
 a copy, so the window, the API, the chat answer and the HTTP header cannot
 disagree with the build they came from.
 
-The file is read once and cached — it cannot change while the process runs.  A
-file that does not hold a plain number is *not* accepted, because the host
+The file is read once and cached — the number a *process* runs cannot change.
+An upgrade replaces that file while a window is open, though, so
+:func:`on_disk` reads it again (cached by size and mtime) and :func:`status`
+tells the window that the code on disk is newer than the code in memory; that
+is what lets the page restart the server in place instead of asking the
+listener to hunt for processes.
+
+A file that does not hold a plain number is *not* accepted, because the host
 installer writes an ``app=…`` record to ``$APP_HOME/VERSION``; the real number
 sits next to the code there, and a record must never be shown as a version.
 """
@@ -27,6 +33,10 @@ _PLAIN = re.compile(r"^[0-9]+(?:\.[0-9]+)*(?:[-+~][0-9A-Za-z][0-9A-Za-z.+-]*)?$"
 
 _cache: dict[str, tuple[str, str]] = {}
 
+#: what the files on disk say, keyed by (path, size, mtime_ns) — an upgrade
+#: replaces the VERSION file, so the key changes with it
+_disk_cache: dict[tuple[str, int, int], tuple[str, str]] = {}
+
 
 def _candidates() -> list[Path]:
     """Where the number may sit, nearest first.
@@ -42,39 +52,77 @@ def _candidates() -> list[Path]:
     return [home / "VERSION", code / "VERSION"]
 
 
+def _plain(path: Path) -> str:
+    """The version in `path`, or '' when it holds none (or cannot be read)."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    first = next((line.strip() for line in text.splitlines()
+                  if line.strip()), "")
+    return first if _PLAIN.match(first) and len(first) <= 40 else ""
+
+
 def version_file() -> Path | None:
     """The file the version really came from, or None when there is none."""
     for candidate in _candidates():
-        try:
-            if not candidate.is_file():
-                continue
-            text = candidate.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        if not candidate.is_file():
             continue
-        first = next((line.strip() for line in text.splitlines()
-                      if line.strip()), "")
-        if _PLAIN.match(first) and len(first) <= 40:
+        if _plain(candidate):
             return candidate
     return None
 
 
 def _read() -> tuple[str, str]:
+    """The release this *process* loaded, read once and kept."""
     if "value" in _cache:
         return _cache["value"]
     path = version_file()
-    value = UNKNOWN
-    where = ""
-    if path is not None:
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            text = ""
-        first = next((line.strip() for line in text.splitlines()
-                      if line.strip()), "")
-        if _PLAIN.match(first):
-            value, where = first, str(path)
-    _cache["value"] = (value, where)
+    value = _plain(path) if path is not None else ""
+    _cache["value"] = ((value, str(path)) if value else (UNKNOWN, ""))
     return _cache["value"]
+
+
+def on_disk() -> tuple[str, str]:
+    """The release the files carry *now* — an upgrade changes it mid-session.
+
+    Cached by (path, size, mtime), so the window can ask on every status poll
+    for the cost of one ``stat`` and still notice a package that was installed
+    a second ago.
+    """
+    for candidate in _candidates():
+        try:
+            info = candidate.stat()
+        except OSError:
+            continue
+        key = (str(candidate), info.st_size, info.st_mtime_ns)
+        if key in _disk_cache:
+            cached = _disk_cache[key]
+            if cached[0]:
+                return cached
+            continue
+        value = _plain(candidate)
+        found = (value, str(candidate)) if value else (UNKNOWN, "")
+        if len(_disk_cache) > 8:          # the last few upgrades, not a leak
+            _disk_cache.clear()
+        _disk_cache[key] = found
+        if value:
+            return found
+    return UNKNOWN, ""
+
+
+def status() -> dict:
+    """Running code against installed code — what a restart would change."""
+    running, where = _read()
+    installed, installed_where = on_disk()
+    stale = bool(installed != UNKNOWN and running != UNKNOWN
+                 and installed != running)
+    return {
+        "running": running,
+        "disk": installed,
+        "file": installed_where or where,
+        "stale": stale,
+    }
 
 
 def app_version() -> str:
@@ -97,11 +145,15 @@ def label() -> str:
 
 
 def info() -> dict:
-    """What the API hands out: the number and where it came from."""
+    """What the API hands out: the number, where it came from, and the one on
+    disk (which a package upgrade can have moved past this process)."""
+    state = status()
     return {
         "name": NAME,
         "short": SHORT,
-        "version": app_version(),
+        "version": state["running"],
+        "on_disk": state["disk"],
+        "stale": state["stale"],
         "file": app_version_file(),
         "python": sys.version.split()[0],
     }
@@ -122,6 +174,13 @@ def markdown(root=None) -> str:
         detail.append(f"running from `{root}`")
     lines.append("")
     lines.append(" · ".join(detail) + ".")
+    state = status()
+    if state["stale"]:
+        lines.append("")
+        lines.append(f"The code on disk is already **{state['disk']}**, so this "
+                     "process is running older code than the install holds.  "
+                     "The window restarts the server by itself when it notices "
+                     "that; if it did not, start the app again.")
     lines.append("")
     lines.append("The same number is what the window shows next to the name, "
                  "what `/api/state` reports and what the HTTP server and the "

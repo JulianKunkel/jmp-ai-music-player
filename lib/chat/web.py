@@ -544,6 +544,9 @@ class ChatService:
                 # file next to the code — one number for the window, the API
                 # and the chat
                 "version": version.info(),
+                # ...and the release the files on disk carry, which an upgrade
+                # can have moved past this process
+                "restart": restart_status(),
                 "artwork": self.artwork_reader(),
                 "dry_run": bool(self.dry_run),
                 "stats": stats,
@@ -670,6 +673,10 @@ class ChatService:
                 "time": _clock(position),
                 "total": _clock(duration),
                 "error": getattr(self.engine.player, "last_error", "") or "",
+                # the release this process loaded against the one on disk.
+                # One stat per poll, so the page notices an upgrade within two
+                # seconds and can restart the server instead of asking.
+                "restart": restart_status(),
             }
             payload.pop("busy", None)
             self._last_status = payload
@@ -2761,6 +2768,11 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, "pid": os.getpid(),
                         "root": str(self.service.root)})
             return
+        if path == "/api/restart":
+            # read-only: what a restart would change, and whether this process
+            # can do it.  POST below is the one that acts.
+            self._json(restart_status())
+            return
         if path.startswith("/api/import/"):
             job = self.service.import_job(path.rsplit("/", 1)[-1])
             if job is None:
@@ -3014,6 +3026,23 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(result, 400 if not result.get("removed") else 200)
             return
+        if path == "/api/restart":
+            state = restart_status()
+            if not state["stale"]:
+                self._json({"ok": True, "restarted": False,
+                            "note": ("the running code is already the installed "
+                                     f"one ({state['running']})")})
+                return
+            if not state["available"]:
+                self._json({"error": state["reason"], "restartable": False,
+                            "running": state["running"],
+                            "disk": state["disk"]}, 409)
+                return
+            answer = {"ok": True, "restarted": True, "pid": os.getpid(),
+                      "from": state["running"], "to": state["disk"]}
+            self._json(answer)
+            schedule_restart()
+            return
         if path == "/api/quit":
             self._json({"ok": True})
             threading.Thread(target=self.server.shutdown, daemon=True).start()
@@ -3113,6 +3142,93 @@ def _clear_state(root: Path) -> None:
         pass
 
 
+# -- restarting in place ----------------------------------------------------
+#
+# An upgrade replaces files, not a running window: the old process keeps its
+# old code in memory until it is replaced.  Instead of asking the listener to
+# find and kill PIDs, the server re-executes itself when the page notices that
+# the number on disk differs from the one it loaded.
+#
+# ``os.execv`` keeps the pid, so the port, the token and ``server.json`` all
+# stay valid — the open window keeps polling the URL it already has and only
+# has to reload once the new image answers.  mpv and the detached background
+# jobs are separate processes, so playback and a running measurement survive.
+
+#: how this server was started: {"argv", "port", "token"} — set by run_web
+_RESTART: dict = {}
+
+
+def restart_available() -> bool:
+    """Whether this process may replace itself (only the real window may)."""
+    return bool(_RESTART.get("argv"))
+
+
+def restart_reason() -> str:
+    if restart_available():
+        return ""
+    return ("this server was not started as `music chat --web`, so it cannot "
+            "replace itself — start the app again")
+
+
+def restart_status() -> dict:
+    """What the window needs to decide: running release, installed one, can it?"""
+    state = version.status()
+    state["available"] = restart_available()
+    state["reason"] = restart_reason()
+    return state
+
+
+def restart_argv() -> list[str]:
+    """The command that starts this same server again, on the same port.
+
+    The window is already open, so the copy starts with ``--no-open``; the port
+    and the token are forced to the ones in use, because the page's URL carries
+    both.  Any ``--port``/``--token``/``--open`` the command already had is
+    dropped first, so a restart cannot accumulate them.
+    """
+    argv = [str(part) for part in _RESTART.get("argv") or []]
+    if not argv:
+        raise RuntimeError("this server cannot restart itself")
+    out: list[str] = []
+    skip = False
+    for part in argv:
+        if skip:
+            skip = False
+            continue
+        if part in ("--port", "--token"):
+            skip = True
+            continue
+        if part in ("--open", "--no-open"):
+            continue
+        out.append(part)
+    out += ["--no-open", "--port", str(_RESTART["port"]),
+            "--token", str(_RESTART["token"])]
+    return [sys.executable, *out]
+
+
+def schedule_restart(delay: float = 0.4, execute=None) -> None:
+    """Replace this process with a freshly loaded copy of the same command.
+
+    The delay lets the answer that announced the restart leave the socket
+    first.  ``execute`` exists for the tests: with it, the command that would
+    run can be inspected without ending the test process.
+    """
+    run = execute or os.execv
+    argv = restart_argv()          # raise here, before anything is promised
+
+    def _go() -> None:
+        time.sleep(delay)
+        try:
+            run(argv[0], argv)
+        except OSError:
+            # nothing is left to answer with: a clean exit lets the next start
+            # pick the new code up instead of leaving a half-dead server
+            os._exit(1)
+
+    threading.Thread(target=_go, name="chat-restart", daemon=True).start()
+
+
+
 def _window_pythons() -> list[str]:
     """Interpreters worth trying for the native window, best first."""
     seen: set[str] = set()
@@ -3177,6 +3293,8 @@ def _media_agent(url: str) -> None:
     keeps the name on the *host* session bus; in a server container it finds
     no bus (or no PyGObject) and exits on its own.
     """
+    if os.environ.get("JMP_NO_MEDIA_AGENT"):
+        return                      # the tests start throwaway servers
     script = Path(__file__).with_name("media_keys.py")
     if not script.is_file():
         return
@@ -3262,7 +3380,8 @@ def _notify(message: str) -> None:
 
 def run_web(root: Path | None = None, host: str = "127.0.0.1", port: int = 0,
             use_llm: bool = True, dry_run: bool = False,
-            open_browser: bool = True, idle_exit: int = 0) -> int:
+            open_browser: bool = True, idle_exit: int = 0,
+            token: str = "") -> int:
     service = ChatService(root=root, use_llm=use_llm, dry_run=dry_run)
     service.dry_run = dry_run
 
@@ -3274,13 +3393,21 @@ def run_web(root: Path | None = None, host: str = "127.0.0.1", port: int = 0,
             _notify("JulAIn Music Player is already running: " + existing)
         return 0
 
-    token = secrets.token_urlsafe(18)
+    # a restart re-executes this same command, so the token has to survive it:
+    # the open page carries it in every request and in its own address
+    token = token or secrets.token_urlsafe(18)
     httpd = ThreadingHTTPServer((host, port), make_handler(service, token))
     httpd.daemon_threads = True
     bound_port = httpd.server_address[1]
     url = f"http://{host}:{bound_port}/?t={token}"
     _write_state(service.root, url)
     _media_agent(url)
+
+    # only a real `music chat --web` invocation may replace itself: a test or a
+    # script that builds a service gets a plain "restart the app" answer
+    if "chat" in sys.argv and "--web" in sys.argv:
+        _RESTART.update({"argv": list(sys.argv), "port": bound_port,
+                         "token": token})
 
     thread = threading.Thread(target=httpd.serve_forever, name="chat-http",
                               daemon=True)

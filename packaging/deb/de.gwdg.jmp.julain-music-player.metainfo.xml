@@ -103,6 +103,24 @@
   </branding>
 
   <releases>
+    <release version="1.2.14" date="2026-11-26">
+      <description>
+        <p>
+          Installing an update no longer needs a restart by hand.  The window
+          compares the release the server loaded with the one the files on disk
+          carry on every status poll; when they differ, the server re-executes
+          itself in place — same process, port and token — and the open page
+          waits for it and reloads once.  Playback and a running measurement
+          keep going, because mpv and the detached jobs are separate processes.
+        </p>
+        <p>
+          Only a real app start may replace the server: one started by a test
+          or a script says to start the app again.  A build that cannot load is
+          remembered per browser session, so the page can never reload in a
+          loop.
+        </p>
+      </description>
+    </release>
     <release version="1.2.13" date="2026-11-26">
       <description>
         <p>
