@@ -709,6 +709,14 @@ class ChatService:
                 self.engine.catalog.reload()
             return result
 
+    def cover(self, rel: str) -> tuple[str, bytes]:
+        """The image the now-playing strip shows: embedded art, else the album.
+
+        No lock: this reads one file (and one small image) and writes nothing,
+        so a chat turn must not make the strip's cover wait.
+        """
+        return tagedit.art_bytes(self.engine.root, rel)
+
     def set_artwork(self, payload: dict) -> dict:
         rel = str(payload.get("rel") or "").strip()
         if not rel:
@@ -2472,6 +2480,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "rel too long"}, 400)
                 return
             self._json(self.service.tags(rel))
+            return
+        if path == "/api/cover":
+            query = parse_qs(parsed.query)
+            rel = (query.get("rel") or [""])[0]
+            if not rel or len(rel) > 500:
+                self._json({"error": "rel required"}, 400)
+                return
+            mime, data = self.service.cover(rel)
+            if not data:
+                # no artwork is not an error the page shows: the strip keeps
+                # its music-note icon, which is most of the chiptune shelves
+                self._json({"error": "no cover art"}, 404)
+                return
+            self._send(200, data, mime)
             return
         if path == "/api/waveform":
             query = parse_qs(parsed.query)

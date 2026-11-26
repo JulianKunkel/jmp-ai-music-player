@@ -4296,6 +4296,131 @@ def check_tagedit(work: Path) -> None:
                                   "image/png").get("ok"))
     shutil.rmtree(lib, ignore_errors=True)
 
+def check_cover(work: Path) -> None:
+    """The now-playing cover: the picture inside the file, then the album's.
+
+    A listener expects the artwork in the strip's cover box, so the endpoint
+    hands out exactly the bytes on disk, a track without art answers 404 (the
+    music-note icon stays), and the requested path may never leave the library.
+    """
+    from chat import tagedit
+    from mutagen.id3 import APIC, ID3
+
+    lib = work / "cover-library"
+    if lib.exists():
+        shutil.rmtree(lib)
+    build_library(lib)
+
+    album = lib / "Artists" / "Eisenwerk" / "Album"
+    folder_png = b"\x89PNG\r\n\x1a\n" + b"FOLDER" * 20
+    embedded_png = b"\x89PNG\r\n\x1a\n" + b"EMBEDDED" * 20
+    (album / "cover.png").write_bytes(folder_png)
+    first = album / "01_Track_1.mp3"
+    tag = ID3(str(first))
+    tag.add(APIC(encoding=3, mime="image/png", type=3, desc="",
+                 data=embedded_png))
+    tag.save(v2_version=4)
+    broken = album / "03_Track_3.mp3"
+    tag = ID3(str(broken))
+    tag.add(APIC(encoding=3, mime="image/png", type=3, desc="",
+                 data=b"not an image"))
+    tag.save(v2_version=4)
+
+    check("the cover of a track is the picture inside the file",
+          tagedit.art_bytes(lib, "Artists/Eisenwerk/Album/01_Track_1.mp3")
+          == ("image/png", embedded_png),
+          str(tagedit.art_bytes(
+              lib, "Artists/Eisenwerk/Album/01_Track_1.mp3")[0]))
+    check("a track without one uses the album's cover file",
+          tagedit.art_bytes(lib, "Artists/Eisenwerk/Album/02_Track_2.mp3")
+          == ("image/png", folder_png), "")
+    check("a broken embedded picture falls back to the album cover",
+          tagedit.art_bytes(lib, "Artists/Eisenwerk/Album/03_Track_3.mp3")
+          == ("image/png", folder_png), "")
+    check("an album without artwork has none",
+          tagedit.art_bytes(lib, "Artists/Federleicht/Album/01_Track_1.mp3")
+          == ("", b""), "")
+    check("a path outside the library is never read as a cover",
+          tagedit.art_bytes(lib, "../../../etc/passwd") == ("", b""), "")
+    check("the type comes from the picture, not from its name",
+          tagedit._image_mime(b"\xff\xd8\xff" + b"x" * 10) == "image/jpeg"
+          and tagedit._image_mime(b"plain text") == "", "")
+
+    service = ChatService(root=lib, use_llm=False, auto_psycho=False)
+    token = "cover-token-7"
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(service, token))
+    httpd.daemon_threads = True
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{httpd.server_address[1]}"
+
+    def get(path: str, with_token: bool = True):
+        url = base + path + ("" if not with_token else
+                             ("&" if "?" in path else "?") + f"t={token}")
+        try:
+            with urllib.request.urlopen(url, timeout=20) as response:
+                return response.status, response.read(), dict(response.headers)
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read(), dict(exc.headers)
+
+    watched = [path for path in lib.rglob("*") if path.is_file()
+               and path.suffix in {".mp3", ".wav", ".png"}]
+    before = {str(path.relative_to(lib)): hashlib.sha256(
+        path.read_bytes()).hexdigest() for path in watched}
+    rel = "Artists/Eisenwerk/Album/01_Track_1.mp3"
+    try:
+        status, body, headers = get(f"/api/cover?rel={rel}")
+        check("the cover endpoint serves the embedded picture",
+              status == 200 and body == embedded_png
+              and headers.get("Content-Type") == "image/png",
+              f"{status} {headers.get('Content-Type')} {len(body)}")
+        status, body, _headers = get(
+            "/api/cover?rel=Artists/Eisenwerk/Album/02_Track_2.mp3")
+        check("a track without embedded art is served the album cover",
+              status == 200 and body == folder_png, f"{status} {len(body)}")
+        status, body, _headers = get(
+            "/api/cover?rel=Artists/Federleicht/Album/01_Track_1.mp3")
+        check("no artwork is a 404, so the page keeps its icon",
+              status == 404, f"{status} {body[:80]}")
+        check("the cover needs the token",
+              get(f"/api/cover?rel={rel}", False)[0] == 403)
+        check("a request without a rel is refused", get("/api/cover")[0] == 400)
+        status, body, _headers = get("/api/cover?rel=../../etc/passwd")
+        check("a cover path outside the library is refused",
+              status == 404 and b"root:" not in body, f"{status} {body[:60]}")
+        check("the service answers with the same bytes",
+              service.cover(rel) == ("image/png", embedded_png))
+
+        page = (LIB / "chat" / "webui" / "index.html").read_text(
+            encoding="utf-8")
+        script = (LIB / "chat" / "webui" / "app.js").read_text(
+            encoding="utf-8")
+        style = (LIB / "chat" / "webui" / "app.css").read_text(
+            encoding="utf-8")
+        check("the strip has an image inside its cover box",
+              'id="np-cover"' in page and 'id="np-cover-img"' in page, "")
+        check("the page asks for the cover of the playing track",
+              "/api/cover?rel=" in script and "setCover(status.rel)" in script
+              and "setCover(\"\")" in script, "")
+        check("a track without art keeps the music-note icon",
+              'classList.remove("has-art")' in script
+              and ".np-cover.has-art svg" in style
+              and ".np-cover img[hidden]" in style, "")
+        check("a newly written cover is asked for again",
+              'state.coverRel = "";' in script, "")
+
+        after = {str(path.relative_to(lib)): hashlib.sha256(
+            path.read_bytes()).hexdigest() for path in watched}
+        check("showing a cover rewrites no audio or image file",
+              before == after,
+              str([key for key in before if before.get(key) != after.get(key)]
+                  )[:200])
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        service.engine.close()
+        shutil.rmtree(lib, ignore_errors=True)
+
+
 def check_smart(work: Path) -> None:
     """Smart playlists: rules, building, the journal and the chat routing."""
     from datetime import datetime, timedelta, timezone
@@ -7905,6 +8030,7 @@ def main() -> int:
         check_duplicates(work)
         check_arrivals(work)
         check_tagedit(work)
+        check_cover(work)
         check_smart(work)
         check_stats(work)
         check_formats(work)

@@ -430,7 +430,9 @@ python3 application/lib/chat/window.py --check      # prints gtk4 / gtk3, exit 3
 The page itself is vanilla HTML/CSS/JS served by the standard library, so there
 is no new Python dependency.
 
-- **Left column:** now playing with cover, transport, seek bar, volume and the
+- **Left column:** now playing with the **cover art** (the picture embedded in
+  the file, else the album's `cover.jpg`/`cover.png`, else the note icon),
+  transport, seek bar, volume and the
   *More like this / Less* feedback; one compact stats line; then the grouped
   playlist list (shelves, moods, focus, sound families, yours) — clicking one
   plays it.

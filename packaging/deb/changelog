@@ -1,3 +1,28 @@
+jmp-ai-music-player (1.2.7-1) unstable; urgency=medium
+
+  * The now-playing strip shows the cover art.  The box left of the title had
+    a fixed music-note icon and never asked for a picture, so a library with
+    6,351 embedded covers and 1,211 folder covers looked like it had none.  A
+    new endpoint, GET /api/cover?rel=…, answers the real bytes: the picture
+    inside the file first, then the album's cover.jpg/cover.png/folder.jpg (the
+    names the scanner already records), with the MIME sniffed from the image
+    rather than trusted from a name, because the answer carries nosniff.  A
+    track without artwork answers 404 and the box keeps its note icon, which is
+    what the chiptune shelves and the loose singles get.  Nothing is written:
+    tagedit.art_bytes() only reads, and it refuses any path that resolves
+    outside the library.
+  * The page asks once per track and keeps the request cheap: an <img> cannot
+    send the API header, so the token travels in ?t= like the page's own (query
+    strings never reach the logs), and the picture is only shown after it
+    really decoded, so an unreadable cover falls back to the icon instead of a
+    broken frame.  A cover written from the tag editor is picked up on the next
+    status poll.
+  * New headless checks: check_cover covers embedded-before-folder, a broken
+    embedded picture, no artwork, the path guard, the endpoint with and without
+    the token, the page wiring and that showing a cover rewrites no file.
+
+ -- Julian Kunkel <julian@kunkel.de>  Thu, 26 Nov 2026 15:00:00 +0100
+
 jmp-ai-music-player (1.2.6-1) unstable; urgency=medium
 
   * Tracks blend at the join instead of cutting.  An mpv audio filter

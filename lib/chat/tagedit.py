@@ -252,6 +252,64 @@ def embedded_art(path: Path) -> tuple[str, bytes]:
     return "", b""
 
 
+def _image_mime(data: bytes) -> str:
+    """The MIME of the picture itself, not the name it happens to carry.
+
+    A cover is served with `nosniff`, so a wrong type would show as a broken
+    image; the magic bytes are what a browser really renders.
+    """
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return ""
+
+
+def art_bytes(root: Path, rel: str) -> tuple[str, bytes]:
+    """(MIME, bytes) of a track's cover: inside the file first, then the folder.
+
+    This is what the now-playing strip shows.  It only reads, and a path that
+    resolves outside the library is refused rather than read as a "cover".
+    """
+    root = Path(root).resolve()
+    rel = library_rel(str(rel or "").strip())
+    try:
+        path = (root / rel).resolve()
+    except (OSError, ValueError):
+        return "", b""
+    if not path.is_relative_to(root):
+        return "", b""
+    data = b""
+    if path.is_file():
+        _, data = embedded_art(path)
+        if data:
+            mime = _image_mime(data)
+            if mime:
+                return mime, data
+    data = b""
+    folder = (root / album_folder(root, rel)).resolve()
+    if not folder.is_relative_to(root):
+        return "", b""
+    cover = folder_cover(folder)
+    if cover is None:
+        names = str(row(root, rel).get("folder_image_names") or "").split(";")
+        cover = next((folder / name for name in names
+                      if name and (folder / name).is_file()), None)
+    if cover is not None:
+        try:
+            data = cover.read_bytes()
+        except OSError:
+            data = b""
+    if not data:
+        return "", b""
+    mime = _image_mime(data)
+    return (mime, data) if mime else ("", b"")
+
+
 def art_state(root: Path, rel: str) -> dict:
     """What artwork the track has, with a preview when it is small enough."""
     root = Path(root)

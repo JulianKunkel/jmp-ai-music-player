@@ -103,6 +103,17 @@
   </branding>
 
   <releases>
+    <release version="1.2.7" date="2026-11-26">
+      <description>
+        <p>
+          The now-playing strip shows the cover art: the picture embedded in
+          the file, else the album's cover file, else the note icon.  The box
+          used to keep a fixed icon and never asked for a picture, so a library
+          full of covers looked like it had none.  It is served from a new
+          read-only endpoint and nothing in the library is rewritten.
+        </p>
+      </description>
+    </release>
     <release version="1.2.6" date="2026-11-26">
       <description>
         <p>
