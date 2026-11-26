@@ -1,3 +1,21 @@
+jmp-ai-music-player (1.2.10-1) unstable; urgency=medium
+
+  * The per-track note now leads with what the track needs.  1.2.9 added the
+    sentence below "no profile for this track yet", but the machine reason
+    stayed the first line, so the panel still opened with that string.  The
+    profile panel and the "Why these values" box now print the ready sentence
+    first ("This track has not been analysed yet, and no lyrics have been
+    transcribed for it.") and keep "no profile for this track yet" as a dimmed
+    second line, so both the answer and the technical reason are visible.
+  * A track whose psychology profile exists but whose row in the selected lens
+    is missing (an older database) now says which view is missing — "The
+    Timbre view has not been built for this track yet." — instead of claiming
+    there is no profile at all.  /api/psycho/explain carries the same per-track
+    state as the panel, so the Why box cannot answer with the bare reason.
+  * No tag, playlist, journal or audio file is written.
+
+ -- Julian Kunkel <julian@kunkel.de>  Thu, 26 Nov 2026 22:00:00 +0100
+
 jmp-ai-music-player (1.2.9-1) unstable; urgency=medium
 
   * The playing track now says what *it* still lacks.  "No profile for this

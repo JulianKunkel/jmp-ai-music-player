@@ -4700,6 +4700,27 @@ def check_track_state(work: Path) -> None:
               data.get("available") is True
               and (data.get("track_state") or {}).get("missing") == [],
               str(data.get("track_state")))
+        data = service.psycho_explain(unknown)
+        check("/api/psycho/explain names the track's gaps too",
+              data.get("error") == "no profile for this track yet"
+              and (data.get("track_state") or {}).get("missing")
+              == ["profile", "lyrics"], str(data.get("track_state")))
+
+        # a track with a psychology profile but no row in the chosen lens
+        # (an older database) says which view is missing, not "no profile"
+        lens = "Artists/Eisenwerk/Album/04_Track_4.mp3"
+        conn = sqlite3.connect(lib / "library-work" / "app" / "psycho"
+                               / "features.db")
+        conn.execute("DELETE FROM profile_set WHERE rel_path = ? "
+                     "AND set_name = 'timbre'", (lens,))
+        conn.commit()
+        conn.close()
+        data = service.psycho(lens, "timbre")
+        check("a missing lens row names that view",
+              data.get("error") == "no profile for this track yet"
+              and str((data.get("track_state") or {}).get("summary", ""))
+              .startswith("The Timbre view has not been built"),
+              str(data.get("track_state")))
         check("the service answers the per-track state on its own",
               service.track_state(unknown)["missing"]
               == ["profile", "lyrics"], "")
@@ -4739,6 +4760,9 @@ def check_track_state(work: Path) -> None:
               and 'gap.textContent = "lyrics out of date"' in script, "")
         check("the no-profile note adds the track's own sentence",
               "data.track_state" in script and "state.summary" in script, "")
+        check("the note leads with that sentence, not the bare reason",
+              "state.summary || data.error" in script
+              and ".psycho-reason" in style, "")
         check("'partly estimated' needs a profile to be partly measured",
               "record.estimated && trackState.profile !== false" in script, "")
         check("the lyrics note names the missing analysis and transcriber",

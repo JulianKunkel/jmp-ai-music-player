@@ -1421,6 +1421,12 @@ kbd {
   color: var(--muted); background: var(--panel-2);
   border: 1px dashed var(--line);
 }
+/* the machine reason under the per-track sentence ("no profile for this track
+   yet") — kept, but dimmed so it does not read as the whole answer */
+.psycho-reason {
+  opacity: .65;
+  font-size: 11px;
+}
 .psycho-setname {
   font: 10.5px var(--mono); padding: 3px 8px; border-radius: 999px;
   color: #b9e4f5; background: rgba(56, 189, 248, .1);

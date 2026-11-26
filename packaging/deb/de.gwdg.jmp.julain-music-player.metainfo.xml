@@ -103,6 +103,22 @@
   </branding>
 
   <releases>
+    <release version="1.2.10" date="2026-11-26">
+      <description>
+        <p>
+          The Profile panel and the "Why these values" box lead with what the
+          track needs — "This track has not been analysed yet, and no lyrics
+          have been transcribed for it." — and keep the machine reason below it
+          as a dimmed second line, so the panel no longer opens with "no profile
+          for this track yet".
+        </p>
+        <p>
+          A track whose psychology profile exists but whose row in the selected
+          view is missing now names that view instead of claiming it has no
+          profile at all.  Nothing in the library is rewritten.
+        </p>
+      </description>
+    </release>
     <release version="1.2.9" date="2026-11-26">
       <description>
         <p>

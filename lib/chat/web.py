@@ -2160,8 +2160,17 @@ class ChatService:
                 return {"error": "no track selected", "set": set_name,
                         "sets": sets, "axes": self._psycho_axes(set_name)}
             record = self.engine.psycho.describe(track.rel, set_name)
-            from .psycho import RAW
+            from .psycho import RAW, SETS
             state = self.engine.track_state(track.rel, record)
+            if record is None and state.get("profile") and set_name != "psychology":
+                # the psychology profile exists but this lens has no row yet
+                # (an older database): say that instead of a bare "no profile"
+                label = next((item["label"] for item in SETS
+                              if item["key"] == set_name), set_name)
+                state = dict(state)
+                state["summary"] = (f"The {label} view has not been built for "
+                                    f"this track yet. "
+                                    + state.get("summary", "")).strip()
             if record is None:
                 return {
                     "rel": track.rel, "title": track.name,
@@ -2212,7 +2221,10 @@ class ChatService:
             data = self.engine.psycho.explain(track.rel, set_name=set_name)
             if data is None:
                 return {"rel": track.rel, "set": set_name,
-                        "error": "no profile for this track yet"}
+                        "error": "no profile for this track yet",
+                        # the same per-track sentence as the panel note, so the
+                        # "why" box does not answer with a bare machine reason
+                        "track_state": self.engine.track_state(track.rel)}
             data["title"] = track.name
             data["artist"] = track.who
             return data
