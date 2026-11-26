@@ -27,6 +27,7 @@ from . import version as version_mod
 from . import arrivals as arrivals_mod
 from . import duplicates as duplicates_mod
 from . import health
+from . import history as history_mod
 from .agent import Agent
 from .catalog import (AUDIO_EXT, Catalog, Playlist, Track, clock, fold,
                       human_duration, library_rel)
@@ -1433,12 +1434,13 @@ class Engine:
                 and resolved.playlist.kind == "smart"):
             try:
                 from . import smart as smart_lists
+                saved_rules = (smart_lists.definitions(self.root)
+                               .get(resolved.playlist.name) or {}).get("rules") or {}
                 smart_lists.build(
                     self.root, resolved.playlist.name,
                     rows=self.catalog.rows,
-                    axes=self._smart_axes(
-                        (smart_lists.definitions(self.root)
-                         .get(resolved.playlist.name) or {}).get("rules") or {}),
+                    axes=self._smart_axes(saved_rules),
+                    plays=self._smart_plays(saved_rules),
                     dry_run=self.dry_run)
                 self.catalog.playlists(refresh=True)
             except (OSError, ValueError, SystemExit):
@@ -2940,6 +2942,16 @@ class Engine:
         except Exception:                       # noqa: BLE001 - never fatal
             return None
 
+    def _smart_plays(self, rules: dict) -> dict | None:
+        """The play record, but only when a rule asks about listening."""
+        from . import smart as smart_lists
+        if not any(key in (rules or {}) for key in smart_lists.HISTORY_KEYS):
+            return None
+        try:
+            return history_mod.played_index(self.root)
+        except Exception:                       # noqa: BLE001 - never fatal
+            return None
+
     def skill_smart(self, args: dict, request: str) -> Reply:
         """Saved rules that rebuild a playlist from the inventory."""
         from . import smart
@@ -2996,6 +3008,7 @@ class Engine:
                 result = smart.build_all(
                     self.root, rows=self.catalog.rows,
                     axes=self._smart_axes({"axes": True}),
+                    plays=history_mod.played_index(self.root),
                     dry_run=self.dry_run)
                 self.catalog.playlists(refresh=True)
                 if not result["lists"]:
@@ -3074,7 +3087,8 @@ class Engine:
             try:
                 result = smart.build(
                     self.root, name, clean, rows=self.catalog.rows,
-                    axes=self._smart_axes(clean), dry_run=self.dry_run)
+                    axes=self._smart_axes(clean),
+                    plays=self._smart_plays(clean), dry_run=self.dry_run)
             except (OSError, ValueError, SystemExit) as exc:
                 return Reply(f"The smart playlist could not be written: {exc}",
                              error=True)
@@ -5084,6 +5098,78 @@ class Engine:
         from . import stats as stats_mod
         return stats_mod.summary(self.root)
 
+    # -- listening history -------------------------------------------------
+
+    def play_history(self, days: int | None = None,
+                     limit: int = history_mod.DEFAULT_LIMIT,
+                     forgotten_days: int = history_mod.FORGOTTEN_DAYS) -> dict:
+        """The play record behind the answer and the panel — read-only."""
+        return history_mod.summary(self.root, days=days, limit=limit,
+                                   forgotten_days=forgotten_days)
+
+    def skill_history(self, args: dict, request: str) -> Reply:
+        """What was listened to: plays, favourites, forgotten tracks."""
+        focus = str(args.get("focus") or "").casefold()
+        try:
+            limit = int(args.get("limit") or history_mod.DEFAULT_LIMIT)
+        except (TypeError, ValueError):
+            limit = history_mod.DEFAULT_LIMIT
+        limit = max(1, min(100, limit))
+        days = args.get("days")
+        try:
+            days = max(1, min(3650, int(days))) if days else None
+        except (TypeError, ValueError):
+            days = None
+        forgotten_days = args.get("forgotten_days")
+        try:
+            forgotten_days = (max(1, min(3650, int(forgotten_days)))
+                              if forgotten_days else history_mod.FORGOTTEN_DAYS)
+        except (TypeError, ValueError):
+            forgotten_days = history_mod.FORGOTTEN_DAYS
+        data = self.play_history(days=days, limit=limit,
+                                 forgotten_days=forgotten_days)
+        if not data.get("available"):
+            return Reply(history_mod.markdown(data), tool="history")
+
+        # "play my most played" / "play something I haven't heard in a year":
+        # the queue is the same list the answer shows, written as an ad-hoc
+        # playlist so it can be saved or thrown away like any other
+        if args.get("play"):
+            if focus in {"forgotten", "rediscover", "old"}:
+                rows, label = data.get("forgotten"), "Not heard lately"
+            elif focus in {"never", "unplayed"}:
+                rows = (data.get("never") or {}).get("sample")
+                label = "Never played"
+            elif focus in {"recent", "recently", "last"}:
+                rows, label = data.get("recent"), "Recently played"
+            else:
+                rows, label = data.get("top_tracks"), "Most played"
+            found = [self.catalog.track(item["rel"]) for item in (rows or [])]
+            found = [track for track in found if track is not None]
+            if not found:
+                return Reply("There is nothing in that list to play yet.",
+                             error=True, tool="history · play")
+            queue = self._temp_queue(found, "Listening history", label)
+            ok, message = self._play_path(
+                queue, append=bool(args.get("append")),
+                shuffle=bool(args.get("shuffle")))
+            self.ctx.last_tracks = found
+            self.ctx.current = found[0]
+            text = (f"**{label}** · {len(found)} tracks\n\n"
+                    + _number_tracks(found, 8)
+                    + ("\n\n▶ playing" if ok else f"\n\n_{message}_"))
+            return Reply(text, tracks=found, played=ok, tool="history · play")
+
+        found: list[Track] = []
+        for item in (data.get("top_tracks") or [])[:limit]:
+            track = self.catalog.track(item["rel"])
+            if track is not None:
+                found.append(track)
+        if found:
+            self.ctx.last_tracks = found
+        return Reply(history_mod.markdown(data, focus, limit=min(limit, 12)),
+                     tracks=found, tool="history")
+
     def library_duplicates(self) -> dict:
         """The read-only duplicate review behind the panel and the chat."""
         return duplicates_mod.summary(self.root)
@@ -5227,6 +5313,8 @@ class Engine:
         if action == "health":
             return Reply(health.markdown(self.library_health()),
                          tool="library-overview · health")
+        if action in {"history", "listening", "plays"}:
+            return self.skill_history(args, request)
         if action in {"stats", "statistics"}:
             from . import stats as stats_mod
             data = stats_mod.summary(self.root)
@@ -5275,6 +5363,11 @@ class Engine:
         if current.startswith(str(self.root)):
             rel = os.path.relpath(current, self.root).replace(os.sep, "/")
         if rel and rel != self._last_rel:
+            # the track that just ended is a finished listen: the history
+            # records it, whatever the learner decides to do with it
+            if self._last_rel:
+                self._remember_play(self._last_rel, self._last_pos,
+                                    self._last_duration)
             if (self._last_rel and self._last_pos >= 20
                     and self._last_rel not in self._observed):
                 track = self.catalog.track(self._last_rel)
@@ -5295,10 +5388,20 @@ class Engine:
             if track is not None:
                 self.ctx.current = track
         try:
-            self._last_pos = float(status.get("time") or 0)
-            self._last_duration = float(status.get("duration") or 0)
+            position = float(status.get("time") or 0)
+            duration = float(status.get("duration") or 0)
         except (TypeError, ValueError):
-            pass
+            position, duration = self._last_pos, self._last_duration
+        # the same file starting again (a loop, endless repeat, a manual
+        # replay): mpv keeps the file name, so the jump from the end back to
+        # the start is what tells the two listens apart
+        if (rel and rel == self._last_rel and self._last_duration > 0
+                and self._last_pos >= self._last_duration * 0.8
+                and position < min(5.0, self._last_duration * 0.2)):
+            self._remember_play(rel, self._last_duration, self._last_duration)
+            self._observed.discard(rel)      # a second listen may teach again
+        self._last_pos = position
+        self._last_duration = duration
         # levelling and soft endings: one audio filter derived from the stored
         # measurement and the fade setting, so a quiet rip and a loud master
         # sit at the same level and tracks blend at the join.  The audio file
@@ -5311,6 +5414,21 @@ class Engine:
         # writer throttles itself: a few dozen bytes every 20 s, never a tag)
         self.save_session(status=status)
         return status
+
+    def _remember_play(self, rel: str, heard, duration,
+                       source: str = "") -> bool:
+        """One finished listen into the play record — never fatal.
+
+        Nothing is written in a dry run, and a listen that was really a skip
+        is refused by `history.record`, so the numbers never pretend.
+        """
+        if self.dry_run or not rel:
+            return False
+        try:
+            return history_mod.record(self.root, rel, heard, duration,
+                                      source=source)
+        except Exception:                   # noqa: BLE001 - poll must survive
+            return False
 
     def _apply_audio_filter(self, rel: str,
                             status: dict | None = None) -> None:

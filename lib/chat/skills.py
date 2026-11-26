@@ -164,9 +164,12 @@ REGISTRY: dict[str, dict] = {
     },
     "library-overview": {
         "title": "Library overview",
-        "args": {"action": "show|index|status|health|stats",
+        "args": {"action": "show|index|status|health|stats|history",
                  "focus": "genres|artists|albums|decades|formats|added|"
-                          "length|quality|playlists|coverage"},
+                          "length|quality|playlists|coverage|top|recent|"
+                          "forgotten|never",
+                 "days": "how far back the history counts",
+                 "play": "bool — queue the list as an ad-hoc mix"},
         "handler": "skill_overview",
     },
     "index-library": {

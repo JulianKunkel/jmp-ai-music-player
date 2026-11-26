@@ -19,6 +19,8 @@ the inventory already carries:
 | `min_duration`, `max_duration` | seconds |
 | `min_bitrate`, `max_bitrate` | kbit/s |
 | `axes` | axis name → minimum percentile (0..1) from the profile database |
+| `min_plays`, `max_plays` | how often the track was listened to (`max_plays: 0` = never played) |
+| `not_played_days` | not heard in the last N days (a track never played also matches) |
 | `sort` | `added` (default, newest first), `oldest`, `title`, `artist`, `duration`, `shuffle` |
 | `limit` | how many tracks survive the sort |
 
@@ -45,7 +47,11 @@ STATE = Path("library-work") / "app" / "chat" / "smart.json"
 FILTERS = ("genre", "artist", "album", "grouping", "codec",
            "not_genre", "not_artist")
 RANGES = ("year_from", "year_to", "added_days",
-          "min_duration", "max_duration", "min_bitrate", "max_bitrate")
+          "min_duration", "max_duration", "min_bitrate", "max_bitrate",
+          "min_plays", "max_plays", "not_played_days")
+
+#: the keys that need the play record (`history.played_index`), not the tags
+HISTORY_KEYS = ("min_plays", "max_plays", "not_played_days")
 SORTS = ("added", "oldest", "title", "artist", "duration", "shuffle")
 
 MAX_NAME = 80
@@ -150,6 +156,12 @@ def normalise(rules: dict) -> dict:
                 axes[str(axis).strip().lower()] = max(0.0, min(1.0, number))
             if axes:
                 clean["axes"] = axes
+        elif key in HISTORY_KEYS:
+            number = _number(value, int)
+            if number is None or number < 0:
+                raise ValueError(f"`{key}` needs a whole number of zero or "
+                                 "more.")
+            clean[key] = number
         elif key in RANGES:
             number = _number(value, int)
             if number is not None:
@@ -188,10 +200,11 @@ def normalise(rules: dict) -> dict:
                 clean["limit"] = number
         else:
             raise ValueError(f"Unknown smart-playlist rule “{key}”.")
-    if not any(key in clean for key in FILTERS + RANGES + ("axes",)):
+    if not any(key in clean for key in FILTERS + RANGES + HISTORY_KEYS
+               + ("axes",)):
         raise ValueError("A smart playlist needs at least one filter — "
                          "genre, artist, album, shelf, year, added, length, "
-                         "bitrate or a sound axis.")
+                         "bitrate, play count or a sound axis.")
     if clean.get("year_from", 0) and clean.get("year_to", 0) \
             and clean["year_from"] > clean["year_to"]:
         clean["year_from"], clean["year_to"] = (clean["year_to"],
@@ -231,6 +244,14 @@ def describe(rules: dict) -> str:
         parts.append(f"at least {rules['min_bitrate']} kbit/s")
     if rules.get("max_bitrate"):
         parts.append(f"at most {rules['max_bitrate']} kbit/s")
+    if rules.get("min_plays"):
+        parts.append(f"played at least {rules['min_plays']} times")
+    if rules.get("max_plays") is not None:
+        plays = rules["max_plays"]
+        parts.append("never played" if plays == 0
+                     else f"played at most {plays} times")
+    if rules.get("not_played_days"):
+        parts.append(f"not heard in {rules['not_played_days']} days")
     for axis, floor in (rules.get("axes") or {}).items():
         parts.append(f"{axis} ≥ {round(floor * 100)}%")
     if not parts:
@@ -275,8 +296,14 @@ def _hit(needles, row: dict, fields: tuple[str, ...]) -> bool:
 
 
 def matches(row: dict, rules: dict, axes: dict | None = None,
-            now: float | None = None) -> bool:
-    """Does one inventory row satisfy the rule set?"""
+            now: float | None = None,
+            plays: dict | None = None) -> bool:
+    """Does one inventory row satisfy the rule set?
+
+    `plays` is `history.played_index(root)` (`rel -> {plays, last}`) and is
+    only read when a rule asks about listening.
+    """
+    rel = library_rel(str(row.get("rel_path") or ""))
     if rules.get("genre") and not _hit(rules["genre"], row, ("genre",)):
         return False
     if rules.get("artist") and not _hit(
@@ -325,11 +352,24 @@ def matches(row: dict, rules: dict, axes: dict | None = None,
         if bitrate is None or bitrate > rules["max_bitrate"]:
             return False
     for axis, floor in (rules.get("axes") or {}).items():
-        values = (axes or {}).get(library_rel(str(row.get("rel_path") or "")))
+        values = (axes or {}).get(rel)
         if not values or values.get(axis) is None:
             return False
         if float(values[axis]) < floor:
             return False
+    if any(key in rules for key in HISTORY_KEYS):
+        entry = (plays or {}).get(rel) or {}
+        count = int(entry.get("plays") or 0)
+        last = float(entry.get("last") or 0)
+        if rules.get("min_plays") is not None and count < rules["min_plays"]:
+            return False
+        if rules.get("max_plays") is not None and count > rules["max_plays"]:
+            return False
+        if rules.get("not_played_days"):
+            span = float(rules["not_played_days"]) * 86400
+            now = now if now is not None else datetime.now(timezone.utc).timestamp()
+            if last and now - last < span:
+                return False
     return True
 
 
@@ -368,15 +408,16 @@ def _rels(rows: list[dict]) -> list[str]:
     return out
 
 
-def matching(rows: list[dict], rules: dict, axes: dict | None = None
-             ) -> list[dict]:
+def matching(rows: list[dict], rules: dict, axes: dict | None = None,
+             plays: dict | None = None) -> list[dict]:
     now = datetime.now(timezone.utc).timestamp()
     return _sorted([row for row in rows
-                    if matches(row, rules, axes, now)], rules)
+                    if matches(row, rules, axes, now, plays)], rules)
 
 
 def build(root: Path, name: str, rules: dict | None = None, *,
           rows: list[dict] | None = None, axes: dict | None = None,
+          plays: dict | None = None,
           dry_run: bool = False, prune: bool = True) -> dict:
     """(Re)write one smart playlist from its rules.
 
@@ -395,7 +436,7 @@ def build(root: Path, name: str, rules: dict | None = None, *,
     if rows is None:
         from .catalog import Catalog
         rows = Catalog(root).rows
-    chosen = matching(rows, rule_set, axes)
+    chosen = matching(rows, rule_set, axes, plays)
     rels = _rels(chosen)
     result = {
         "name": name,
@@ -446,7 +487,8 @@ def prune_stale(root: Path, saved: dict[str, dict] | None = None) -> list[str]:
 
 
 def build_all(root: Path, *, rows: list[dict] | None = None,
-              axes: dict | None = None, dry_run: bool = False) -> dict:
+              axes: dict | None = None, plays: dict | None = None,
+              dry_run: bool = False) -> dict:
     """Rebuild every saved smart list; returns per-list results."""
     root = Path(root)
     saved = definitions(root)
@@ -456,7 +498,8 @@ def build_all(root: Path, *, rows: list[dict] | None = None,
     built = []
     for name, entry in saved.items():
         built.append(build(root, name, entry.get("rules"), rows=rows,
-                           axes=axes, dry_run=dry_run, prune=False))
+                           axes=axes, plays=plays, dry_run=dry_run,
+                           prune=False))
     return {"lists": built, "count": len(built),
             "tracks": sum(item["count"] for item in built),
             "total": len(rows), "dry_run": bool(dry_run)}

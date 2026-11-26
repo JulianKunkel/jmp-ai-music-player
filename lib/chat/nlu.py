@@ -514,6 +514,31 @@ def smart_rules(text: str) -> dict:
     if rate:
         rules["max_bitrate"] = int(rate.group(2))
 
+    # play counts: "songs I never played", "played at least 10 times",
+    # "not heard in a year".  A never-played rule also tolerates the bare
+    # "unplayed", because that is one word for the same list.
+    never = _has(f, "never played", "never listened", "never heard", "unplayed",
+                 "nie gespielt", "nie gehort", "noch nie gespielt",
+                 "noch nie gehort")
+    if never:
+        rules["max_plays"] = 0
+    else:
+        at_most = re.search(r"\b(?:at most|maximum|max|hochstens|hoechstens)"
+                            r"\s+(\d{1,3})\s*(?:times|mal)\b", f)
+        if at_most:
+            rules["max_plays"] = int(at_most.group(1))
+        elif _has(f, "not played", "not heard", "not listened",
+                  "haven't played", "havent played", "haven't heard",
+                  "havent heard", "nicht gespielt", "nicht gehort",
+                  "lange nicht"):
+            span = history_span(text)
+            if span:
+                rules["not_played_days"] = span
+    at_least = re.search(r"\b(?:at least|more than|mindestens|mehr als|"
+                         r"uber|ueber)\s+(\d{1,3})\s*(?:times|mal)\b", f)
+    if at_least:
+        rules["min_plays"] = int(at_least.group(1))
+
     if _has(f, "oldest first", "aelteste zuerst", "alteste zuerst"):
         rules["sort"] = "oldest"
     elif _has(f, "alphabetical", "by title", "nach titel", "alphabetisch"):
@@ -596,6 +621,98 @@ def stats_focus(text: str) -> str:
     if _has(f, "playlist", "playlists", "listen"):
         return "playlists"
     return ""
+
+
+def history_focus(text: str) -> str:
+    """Which slice of the listening record a sentence asks for ("" = not one).
+
+    This is deliberately narrower than "contains the word played": a phrase
+    has to *ask about listening*, so "play the song played in the film" stays
+    a search and "what changed" stays activity.  `"all"` means the sentence
+    asks about the record as a whole rather than one slice.
+    """
+    f = " " + " ".join(fold(text).split()) + " "
+    if _has(f, "never played", "never listened", "never heard", "unplayed",
+            "never been played", "never been listened", "never been heard",
+            "has never played", "have never played", "has never been played",
+            "not played yet", "not played at all", "not listened yet",
+            "nie gespielt", "nie gehort", "noch nie gespielt",
+            "noch nie gehort", "noch nie gelaufen", "nie gelaufen"):
+        return "never"
+    if _has(f, "not heard in", "not played in", "not listened to in",
+            "havent heard", "haven't heard", "havent played", "haven't played",
+            "havent listened", "haven't listened",
+            "havent i heard", "haven't i heard", "havent i played",
+            "haven't i played", "havent i listened", "haven't i listened",
+            "have not heard", "have not played", "have not listened",
+            "forgotten", "rediscover",
+            "vergessen", "wiederentdecken", "lange nicht gehort",
+            "lange nicht gespielt", "nicht gehort", "nicht gespielt",
+            "nicht mehr gehort", "nicht mehr gespielt"):
+        return "forgotten"
+    if _has(f, "most played", "most listened", "top played", "top listened",
+            "often played", "played most", "listened most", "meistgespielt",
+            "meist gespielt", "am meisten gespielt", "am haufigsten gespielt",
+            "am haufigsten gehort", "am meisten gehort"):
+        return "top"
+    if _has(f, "recently played", "recently listened", "last played",
+            "last listened", "zuletzt gespielt", "zuletzt gehort",
+            "zuletzt gelaufen", "when did i last play",
+            "when did i last listen", "wann habe ich zuletzt"):
+        return "recent"
+    if _has(f, "what have i listened", "what have i played",
+            "what did i listen", "what did i play", "was habe ich gehort",
+            "was habe ich gespielt"):
+        return "recent"
+    if _has(f, "listening history", "play history", "listening statistics",
+            "listening stats", "play statistics", "play stats", "play count",
+            "play counts", "playcount", "horstatistik", "how many plays",
+            "wie viele plays", "wie oft gespielt", "wie oft habe ich",
+            "listening habits", "my listening"):
+        return "all"
+    return ""
+
+
+def history_span(text: str) -> int | None:
+    """N days from “in two years”, “for 6 months”, “seit einem Jahr”."""
+    f = " ".join(fold(text).split())
+    words = {"a": 1, "an": 1, "one": 1, "ein": 1, "eine": 1, "einem": 1,
+             "einer": 1, "two": 2, "zwei": 2, "three": 3, "drei": 3,
+             "six": 6, "sechs": 6, "half a": 0.5, "halbes": 0.5}
+    match = re.search(
+        r"\b(?:in|for|since|seit)\s+(?:over\s+|uber\s+|ueber\s+)?"
+        r"(\d{1,3}|half a|a|an|one|two|three|six|"
+        r"ein(?:e[mnr]?)?|zwei|drei|sechs|halbes)\s+"
+        r"(day|days|week|weeks|month|months|year|years|"
+        r"tag|tage|woche|wochen|monat|monate|jahr|jahre)\b", f)
+    if not match:
+        return None
+    raw = match.group(1)
+    number = words.get(raw)
+    if number is None:
+        try:
+            number = float(raw)
+        except ValueError:
+            return None
+    unit = match.group(2)
+    factor = (365 if unit.startswith(("year", "jahr")) else
+              30 if unit.startswith(("month", "monat")) else
+              7 if unit.startswith(("week", "woche")) else 1)
+    return max(1, int(round(number * factor)))
+
+
+def history_window(folded: str) -> int | None:
+    """The counting window of a history question — only an explicit one."""
+    if _has(folded, "today", "heute"):
+        return 1
+    if _has(folded, "this week", "last week", "diese woche", "letzte woche"):
+        return 7
+    if _has(folded, "this month", "last month", "diesen monat",
+            "letzten monat"):
+        return 31
+    if _has(folded, "this year", "last year", "dieses jahr", "letztes jahr"):
+        return 366
+    return None
 
 
 def extract_paths(text: str) -> list[str]:
@@ -1324,12 +1441,62 @@ def plan(text: str, ctx: Context, catalog, profile=None) -> Plan | None:
             or f in {"changes", "/changes", "änderungen", "aenderungen"}:
         return Plan("activity", {"action": "changes"}, confidence=0.9)
 
+    # -- listening history: what was actually played ----------------------
+    #
+    # This sits before the activity block and the play rule: "listening
+    # history" is the record of plays, not the log of playlist edits, and
+    # "play my most played" names a queue built from the record, not a title.
+    # The record starts with this release, so every answer names the date.
+
+    heard = history_focus(original)
+    editing = (_has(f, "playlist", "liste", "mix")
+               and _has(f, "add", "append", "remove", "delete", "hinzufug",
+                        "hinzufueg", "entfern", "losch", "loesch"))
+    # "make a playlist of songs I never played" wants a list, not a report:
+    # the rule set is the smart-playlist form of the same question
+    making = (_has(f, "make", "create", "build", "save", "keep", "mach",
+                   "erstell", "bau", "speicher", "merk")
+              and _has(f, "playlist", "playlists", "liste", "mix"))
+    if heard and making:
+        rules = smart_rules(original)
+        if any(key in rules for key in ("min_plays", "max_plays",
+                                        "not_played_days")):
+            return Plan("smart-playlist", {"action": "build", "rules": rules,
+                                           "name": ""}, confidence=0.85)
+    if heard and not editing and not _has(
+            f, "youtube", "download", "import", "spotify", "herunterlad",
+            "smart playlist", "smart liste", "smart mix"):
+        focus = "" if heard == "all" else heard
+        args = {"action": "history"}
+        if focus:
+            args["focus"] = focus
+        span = history_span(original)
+        if span and heard in {"forgotten", "never"}:
+            args["forgotten_days"] = span
+        window = history_window(f)
+        if window:
+            args["days"] = window
+        # a listing is the default, so a bare "play history" never starts
+        # music; only a real "play my most played" builds the queue
+        bare = _has(f, "play history", "listening history", "horstatistik",
+                    "play count", "play counts", "playcount",
+                    "play statistics", "play stats", "listening statistics",
+                    "listening stats", "playlist")
+        question = _has(f, "what", "which", "who", "when", "how", "show",
+                        "list", "tell", "status", "was", "welche", "welcher",
+                        "welches", "wie", "wann", "zeig", "zeige", "liste")
+        wanted = _has(f, "play", "spiele", "spiel", "abspielen", "queue",
+                      "anhoeren", "anhören", "hore", "hoer")
+        if wanted and not question and not bare:
+            args["play"] = True
+            if _has(f, "shuffle", "shuffled", "random", "zufallig",
+                    "zufaellig"):
+                args["shuffle"] = True
+        return Plan("library-overview", args, confidence=0.85)
+
     if _has(f, "activity", "activities", "history", "verlauf", "aktivitäten",
             "aktivitaeten", "what did i do", "what have i done",
-            "what did i play", "what have i played", "what did i listen to",
-            "listening history", "play history", "recent activity",
-            "past activities", "was habe ich gemacht", "was habe ich gespielt",
-            "was habe ich gehoert", "was habe ich gehört",
+            "recent activity", "past activities", "was habe ich gemacht",
             "letzte aktivitäten", "letzte aktivitaeten") \
             or f in {"activity", "aktivität", "aktivitaet", "history",
                      "/activity", "/history"}:

@@ -2470,6 +2470,409 @@ def check_arrivals(work: Path) -> None:
     shutil.rmtree(lib, ignore_errors=True)
 
 
+def check_history(work: Path) -> None:
+    """Listening history: one row per play, the numbers and the rules."""
+    from datetime import datetime, timedelta, timezone
+    from chat import history, smart
+
+    lib = work / "history"
+    if lib.exists():
+        shutil.rmtree(lib)
+    now = datetime.now(timezone.utc)
+
+    def ago(**kwargs) -> str:
+        return (now - timedelta(**kwargs)).isoformat(timespec="seconds")
+
+    rows = [
+        {"rel_path": "Artists/Eisenwerk/A/01.mp3", "ext": ".mp3",
+         "title": "Old Thrash", "artist": "Eisenwerk", "album": "A",
+         "genre": "Metal", "duration_s": 200, "size_bytes": 5_000_000,
+         "mtime": ago(days=2)},
+        {"rel_path": "Artists/Eisenwerk/A/02.mp3", "ext": ".mp3",
+         "title": "Long One", "artist": "Eisenwerk", "album": "A",
+         "genre": "Metal", "duration_s": 400, "size_bytes": 8_000_000,
+         "mtime": ago(days=3)},
+        {"rel_path": "Artists/Klarbraut/B/01.mp3", "ext": ".mp3",
+         "title": "Soft", "artist": "Klarbraut", "album": "B",
+         "genre": "Ambient", "duration_s": 100, "size_bytes": 2_000_000,
+         "mtime": ago(days=10)},
+        {"rel_path": "Music/Artists/Alt/Other/01.mp3", "ext": ".mp3",
+         "title": "Old Name", "artist": "Alt", "album": "Other",
+         "genre": "Pop", "duration_s": 120, "size_bytes": 3_000_000,
+         "mtime": ago(days=5)},
+        {"rel_path": "Artists/Neu/Album/01.mp3", "ext": ".mp3",
+         "title": "Fresh", "artist": "Neu", "album": "Album",
+         "genre": "Metal", "duration_s": 150, "size_bytes": 4_000_000,
+         "mtime": ago(days=1)},
+    ]
+    for row in rows:
+        path = lib / row["rel_path"].removeprefix("Music/")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"ID3" + b"\x00" * 20)
+    inventory = lib / "library-work" / "inventory" / "files.jsonl"
+    inventory.parent.mkdir(parents=True, exist_ok=True)
+    inventory.write_text("".join(json.dumps(row) + "\n" for row in rows),
+                         encoding="utf-8")
+
+    def snapshot() -> dict[str, int]:
+        return {path.relative_to(lib).as_posix(): path.stat().st_size
+                for path in lib.rglob("*") if path.is_file()
+                and not path.relative_to(lib).as_posix().startswith(
+                    "library-work/app/")}
+
+    before = snapshot()
+
+    # -- what counts as a play --------------------------------------------
+    check("a listen of 20 s of a long track is a play",
+          history.counts_as_play(20, 200) is True)
+    check("one second less is a skip",
+          history.counts_as_play(19.9, 200) is False)
+    check("a short track counts at half of its length",
+          history.counts_as_play(15, 30) is True
+          and history.counts_as_play(14.9, 30) is False)
+    check("nothing under five seconds is ever a play",
+          history.counts_as_play(4.9, 10) is False
+          and history.counts_as_play(5, 10) is True)
+    check("an unknown length falls back to 20 s",
+          history.counts_as_play(20, 0) is True
+          and history.counts_as_play(19, 0) is False)
+    check("a non-number is not a play",
+          history.counts_as_play("x", 100) is False)
+
+    # -- writing -----------------------------------------------------------
+    check("a read never creates the database",
+          history.summary(lib)["available"] is False
+          and not history.db_path(lib).exists())
+    check("a three-second skip is not recorded",
+          history.record(lib, "Artists/Neu/Album/01.mp3", 3, 150) is False
+          and not history.db_path(lib).exists())
+    check("an empty path is refused",
+          history.record(lib, "", 30, 100) is False)
+    check("a real listen is written",
+          history.record(lib, "Artists/Eisenwerk/A/01.mp3", 100, 200,
+                         at=ago(hours=3)) is True
+          and history.db_path(lib).is_file())
+    for offset in (2, 1):
+        history.record(lib, "Artists/Eisenwerk/A/01.mp3", 100, 200,
+                       at=ago(hours=offset))
+    history.record(lib, "Artists/Eisenwerk/A/02.mp3", 200, 400,
+                   at=ago(days=400))
+    history.record(lib, "Artists/Klarbraut/B/01.mp3", 60, 100,
+                   at=ago(days=10))
+    # a pre-move path is stored stripped, so it keeps counting
+    history.record(lib, "Music/Artists/Alt/Other/01.mp3", 30, 120,
+                   at=ago(days=5))
+    # a file that is no longer in the inventory: counted as gone, not lost
+    history.record(lib, "Artists/Gone/Album/01.mp3", 40, 100,
+                   at=ago(days=2))
+
+    index = history.played_index(lib)
+    check("the played index reports plays and the last listen",
+          index["Artists/Eisenwerk/A/01.mp3"]["plays"] == 3
+          and index["Artists/Eisenwerk/A/01.mp3"]["last"] > 0,
+          str(index.get("Artists/Eisenwerk/A/01.mp3")))
+    check("a historical Music prefix is stripped in the record",
+          "Artists/Alt/Other/01.mp3" in index
+          and "Music/Artists/Alt/Other/01.mp3" not in index)
+    check("every finished listen is in the index, even a gone file",
+          len(index) == 5, str(len(index)))
+    check("play_counts is the plain mapping",
+          history.play_counts(lib)["Artists/Eisenwerk/A/01.mp3"] == 3)
+    check("last_played is the plain mapping",
+          history.last_played(lib)["Artists/Klarbraut/B/01.mp3"] > 0)
+
+    # -- the numbers -------------------------------------------------------
+    data = history.summary(lib)
+    check("the summary is available once something played",
+          data["available"] is True)
+    check("plays and tracks are counted, gone files kept apart",
+          data["plays"] == 6 and data["tracks"] == 4 and data["gone"] == 1,
+          f'{data["plays"]} / {data["tracks"]} / {data["gone"]}')
+    check("the heard seconds become hours",
+          data["seconds"] == 590.0 and data["hours"] == 0.16,
+          f'{data["seconds"]} / {data["hours"]}')
+    check("the top artist sums its tracks",
+          data["top_artists"][0]["name"] == "Eisenwerk"
+          and data["top_artists"][0]["plays"] == 4
+          and data["top_artists"][0]["tracks"] == 2,
+          str(data["top_artists"][:2]))
+    check("the most played track leads",
+          data["top_tracks"][0]["title"] == "Old Thrash"
+          and data["top_tracks"][0]["plays"] == 3,
+          str(data["top_tracks"][0])[:200])
+    check("genres sum the plays",
+          data["top_genres"][0]["name"] == "Metal"
+          and data["top_genres"][0]["plays"] == 4,
+          str(data["top_genres"]))
+    check("the first day is the oldest play",
+          data["first_day"]
+          == (now - timedelta(days=400)).astimezone().strftime("%Y-%m-%d"),
+          f'{data["first_day"]} / {data["first"]}')
+    check("the newest listen comes first",
+          data["recent"][0]["title"] == "Old Thrash"
+          and data["recent"][0]["at"], str(data["recent"][:2])[:200])
+    check("never played is the rest of the catalogue",
+          data["never"]["count"] == 1
+          and data["never"]["sample"][0]["title"] == "Fresh"
+          and data["covered"] == 4 and data["catalogue"] == 5,
+          str(data["never"])[:200])
+    check("a window narrows the plays",
+          (lambda window: window["plays"] == 4 and window["tracks"] == 2
+           and window["days"] == 7)(history.summary(lib, days=7)),
+          str(history.summary(lib, days=7)["plays"]))
+    check("the forgotten window is the caller's",
+          [item["title"] for item in history.summary(
+              lib, forgotten_days=90)["forgotten"]] == ["Long One"]
+          and history.summary(lib, forgotten_days=500)["forgotten"] == [],
+          str(history.summary(lib, forgotten_days=90)["forgotten"]))
+    check("a forgotten row carries how long it has been",
+          history.summary(lib, forgotten_days=90)["forgotten"][0]["days"]
+          == 400, str(history.summary(lib, forgotten_days=90)["forgotten"]))
+    check("every answer carries the honest caveat",
+          "starts when the feature first ran" in data["note"])
+
+    # -- the answer --------------------------------------------------------
+    text = history.markdown(data)
+    check("the answer opens with the headline and the start date",
+          "**Listening history** · 6 plays · 4 tracks" in text
+          and "since " in text, text[:300])
+    check("the full answer lists artists, tracks, genres and the recent plays",
+          "**Top artists**" in text and "**Most played**" in text
+          and "**Genres**" in text and "**Recently played**" in text,
+          text[:400])
+    check("a listed track carries its library path",
+          "`Artists/Eisenwerk/A/01.mp3`" in text, text[:600])
+    top = history.markdown(data, "top")
+    check("the top slice keeps the artists and the tracks",
+          "**Top artists**" in top and "**Most played**" in top
+          and "**Genres**" not in top, top[:300])
+    never_text = history.markdown(data, "never")
+    check("the never slice names the unplayed track and the start date",
+          "**Never played** · 1 of 5 tracks" in never_text
+          and "Neu — Fresh" in never_text, never_text[:300])
+    forgotten_text = history.markdown(history.summary(lib,
+                                                      forgotten_days=90),
+                                      "forgotten")
+    check("the forgotten slice names the window and the track",
+          "**Not heard in 90 days**" in forgotten_text
+          and "Eisenwerk — Long One" in forgotten_text,
+          forgotten_text[:300])
+    check("an empty record says so instead of inventing numbers",
+          "**No listening history yet.**" in history.markdown(
+              {"available": False}))
+
+    # -- smart playlists over the record ----------------------------------
+    check("a play-count rule is a filter on its own",
+          smart.normalise({"max_plays": 0}) == {"max_plays": 0})
+    try:
+        smart.normalise({"min_plays": -1})
+        bad_rule = None
+    except ValueError as exc:
+        bad_rule = str(exc)
+    check("a negative play count is refused", bad_rule is not None,
+          str(bad_rule))
+    check("the rule describes itself in words",
+          smart.describe({"max_plays": 0}) == "never played"
+          and smart.describe({"min_plays": 2}) == "played at least 2 times",
+          f'{smart.describe({"max_plays": 0})} / '
+          f'{smart.describe({"min_plays": 2})}')
+    plays = history.played_index(lib)
+    check("never played is exactly the unplayed track",
+          [row["rel_path"] for row in smart.matching(
+              rows, {"max_plays": 0}, plays=plays)]
+          == ["Artists/Neu/Album/01.mp3"],
+          str(smart.matching(rows, {"max_plays": 0}, plays=plays)))
+    check("at least two plays keeps only the thrash track",
+          [row["title"] for row in smart.matching(
+              rows, {"min_plays": 2}, plays=plays)] == ["Old Thrash"])
+    check("not heard in 100 days is the never-played and the 400-day track",
+          {row["title"] for row in smart.matching(
+              rows, {"not_played_days": 100}, plays=plays)}
+          == {"Fresh", "Long One"},
+          str([row["title"] for row in smart.matching(
+              rows, {"not_played_days": 100}, plays=plays)]))
+    built = smart.build(lib, "Never played", {"max_plays": 0}, rows=rows,
+                        plays=plays, dry_run=True)
+    check("a never-played smart list would hold one track and write nothing",
+          built["count"] == 1
+          and built["rels"] == ["Artists/Neu/Album/01.mp3"]
+          and built["written"] == "" and built["dry_run"] is True,
+          str(built)[:300])
+
+    # -- the planner -------------------------------------------------------
+    from chat.nlu import Context, plan as plan_sentence
+
+    class _Catalog:
+        def find_playlist(self, *args, **kwargs):
+            return None
+
+        def __getattr__(self, name):
+            return lambda *args, **kwargs: None
+
+    catalog_stub = _Catalog()
+    for sentence, focus, days, play in (
+            ("listening history", "", None, False),
+            ("play history", "", None, False),
+            ("show my listening statistics", "", None, False),
+            ("what did I play", "recent", None, False),
+            ("what have I listened to", "recent", None, False),
+            ("was habe ich gespielt", "recent", None, False),
+            ("was habe ich gehört", "recent", None, False),
+            ("my most played songs", "top", None, False),
+            ("meistgespielt", "top", None, False),
+            ("play my most played", "top", None, True),
+            ("which tracks have never been played", "never", None, False),
+            ("what haven't I heard in a year", "forgotten", None, False)):
+        planned = plan_sentence(sentence, Context(), catalog_stub)
+        ok = (planned is not None and planned.skill == "library-overview"
+              and planned.args.get("action") == "history"
+              and str(planned.args.get("focus") or "") == focus
+              and planned.args.get("days") == days
+              and bool(planned.args.get("play")) is play)
+        check(f"“{sentence}” asks the listening history", ok,
+              str(planned)[:200])
+    planned = plan_sentence("what haven't I heard in a year", Context(),
+                            catalog_stub)
+    check("the forgotten window follows the sentence",
+          planned.args.get("forgotten_days") == 365, str(planned)[:200])
+    # the guards: no other skill may lose its own sentences
+    for sentence, skill in (
+            ("show the activity", "activity"),
+            ("what changed recently", "activity"),
+            ("undo the last playlist change", "activity"),
+            ("what did I do", "activity"),
+            ("play Bohemian Rhapsody", "play-music"),
+            ("add Bohemian Rhapsody to my playlist", "edit-playlist"),
+            ("search youtube for the beatles", "import-audio"),
+            ("which song mentions pizza", "lyrics"),
+            ("make a smart playlist of 90s metal", "smart-playlist")):
+        planned = plan_sentence(sentence, Context(), catalog_stub)
+        check(f"“{sentence}” stays {skill}",
+              planned is not None and planned.skill == skill,
+              str(planned)[:200])
+    planned = plan_sentence("make a smart playlist of songs I never played",
+                            Context(), catalog_stub)
+    check("a never-played smart playlist is a rule, not a report",
+          planned is not None and planned.skill == "smart-playlist"
+          and planned.args.get("rules", {}).get("max_plays") == 0,
+          str(planned)[:200])
+
+    # -- the chat and the window ------------------------------------------
+    engine = Engine(root=lib, use_llm=False)
+    check("the engine fetches the record only when a rule asks",
+          engine._smart_plays({"genre": ["Metal"]}) is None
+          and engine._smart_plays({"max_plays": 0})[
+              "Artists/Eisenwerk/A/01.mp3"]["plays"] == 3,
+          str(engine._smart_plays({"max_plays": 0}))[:200])
+    reply = engine.handle("listening history")
+    check("chat answers the listening history",
+          "**Listening history**" in reply.text
+          and "Most played" in reply.text
+          and reply.tool == "history", f"{reply.tool}: {reply.text[:300]}")
+    check("the top tracks are offered as a playable result",
+          len(reply.tracks or []) >= 1
+          and reply.tracks[0].rel == "Artists/Eisenwerk/A/01.mp3",
+          str([track.rel for track in reply.tracks or []])[:200])
+    reply = engine.handle("what have I listened to")
+    check("chat lists the recent listens",
+          "Recently played" in reply.text, reply.text[:300])
+    reply = engine.handle("which tracks have never been played")
+    check("chat names the never-played tracks",
+          "Never played" in reply.text and "Fresh" in reply.text,
+          reply.text[:300])
+    engine.dry_run = True
+    reply = engine.handle("play my most played")
+    check("playing it in a dry run starts nothing",
+          "playback skipped" in reply.text, reply.text[:300])
+    engine.dry_run = False
+    engine.close()
+
+    token = "history-token-123"
+    service = ChatService(root=lib, use_llm=False, auto_psycho=False)
+    data = service.play_history()
+    check("the service serves the record",
+          data["plays"] == 6 and data["available"] is True,
+          str(data["plays"]))
+    narrowed = service.play_history(days=7, forgotten_days=90)
+    check("the service passes the window and the forgotten span",
+          narrowed["days"] == 7 and narrowed["forgotten_days"] == 90,
+          f'{narrowed["days"]} / {narrowed["forgotten_days"]}')
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0),
+                                make_handler(service, token))
+    httpd.daemon_threads = True
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{httpd.server_address[1]}"
+    try:
+        url = base + "/api/history?days=7&forgotten_days=90&t=" + token
+        with urllib.request.urlopen(url, timeout=10) as response:
+            served = json.loads(response.read().decode("utf-8"))
+        check("the history route answers with the window",
+              served.get("plays") == 4 and served.get("days") == 7
+              and served.get("forgotten_days") == 90,
+              str(served)[:300])
+        url = base + "/api/history?t=" + token
+        with urllib.request.urlopen(url, timeout=10) as response:
+            served = json.loads(response.read().decode("utf-8"))
+        check("an empty window means all time",
+              served.get("days") is None and served.get("plays") == 6,
+              str(served)[:200])
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        service.engine.close()
+
+    # -- poll records the finished listen ---------------------------------
+    engine = Engine(root=lib, use_llm=False)
+
+    class _Stub:
+        def __init__(self, status):
+            self.status_data = dict(status)
+
+        def running(self):
+            return False
+
+        def status(self):
+            return dict(self.status_data)
+
+        def command(self, *args, **kwargs):
+            return True, "ok"
+
+    klarbraut = str(lib / "Artists/Klarbraut/B/01.mp3")
+    stub = _Stub({"file": klarbraut, "time": 0.0, "duration": 100.0})
+    engine.player = stub
+    engine._youtube_at = time.monotonic()
+    engine._last_rel = "Artists/Eisenwerk/A/02.mp3"
+    engine._last_pos = 200.0
+    engine._last_duration = 400.0
+    engine.poll()
+    counts = history.play_counts(lib)
+    check("leaving a track records the listen",
+          counts.get("Artists/Eisenwerk/A/02.mp3") == 2,
+          str(counts.get("Artists/Eisenwerk/A/02.mp3")))
+
+    stub.status_data = {"file": klarbraut, "time": 90.0, "duration": 100.0}
+    engine.poll()
+    check("a playhead near the end is not a second listen",
+          history.play_counts(lib).get("Artists/Klarbraut/B/01.mp3") == 1)
+    stub.status_data = {"file": klarbraut, "time": 1.0, "duration": 100.0}
+    engine.poll()
+    check("a jump back to the start is a replay",
+          history.play_counts(lib).get("Artists/Klarbraut/B/01.mp3") == 2,
+          str(history.play_counts(lib).get("Artists/Klarbraut/B/01.mp3")))
+    engine.dry_run = True
+    check("a dry run records nothing",
+          engine._remember_play("Artists/Eisenwerk/A/01.mp3", 150, 200)
+          is False)
+    engine.dry_run = False
+    check("a skip is refused by the engine too",
+          engine._remember_play("Artists/Eisenwerk/A/01.mp3", 2, 200) is False)
+    engine.close()
+
+    check("the history changed no music, tag or playlist",
+          before == snapshot())
+    shutil.rmtree(lib, ignore_errors=True)
+
+
 def check_explain(work: Path) -> None:
     """Ranked explanation: the measurements behind an axis, read-only."""
     import sqlite3
@@ -8794,6 +9197,7 @@ def main() -> int:
         check_health(work)
         check_duplicates(work)
         check_arrivals(work)
+        check_history(work)
         check_tagedit(work)
         check_cover(work)
         check_version(work)

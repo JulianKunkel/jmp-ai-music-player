@@ -736,6 +736,14 @@ class ChatService:
         with self.lock:
             return self.engine.library_stats()
 
+    def play_history(self, days: int | None = None,
+                     limit: int = 20,
+                     forgotten_days: int = 365) -> dict:
+        """The listening record — read-only, app state only."""
+        with self.lock:
+            return self.engine.play_history(days=days, limit=limit,
+                                            forgotten_days=forgotten_days)
+
     def library_duplicates(self) -> dict:
         """The duplicate review: read-only, no song is moved or deleted."""
         with self.lock:
@@ -2631,6 +2639,26 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/stats":
             self._json(self.service.library_stats())
+            return
+        if path == "/api/history":
+            query = parse_qs(parsed.query)
+            raw = (query.get("days") or [""])[0].strip()
+            try:
+                days = int(raw) if raw and raw != "0" else None
+            except ValueError:
+                days = None
+            try:
+                limit = int((query.get("limit") or ["20"])[0])
+            except ValueError:
+                limit = 20
+            forgotten = (query.get("forgotten_days") or [""])[0].strip()
+            try:
+                forgotten_days = int(forgotten) if forgotten else 365
+            except ValueError:
+                forgotten_days = 365
+            self._json(self.service.play_history(
+                days=days, limit=max(1, min(200, limit)),
+                forgotten_days=forgotten_days))
             return
         if path == "/api/radio":
             self._json(self.service.radio_state())

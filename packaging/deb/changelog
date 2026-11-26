@@ -1,3 +1,29 @@
+jmp-ai-music-player (1.2.15-1) unstable; urgency=medium
+
+  * The library now remembers what was really listened to.  Every finished
+    listen is one row in a small play database under the app state
+    (`library-work/app/chat/plays.db`): a listen counts from 20 seconds, or
+    half of a shorter track, and never under five seconds, so a skip is not a
+    play; a same-file replay counts again.  No audio file, tag, playlist or
+    journal is written.
+  * "listening history", "play history", "what did I play", "my most played",
+    "what haven't I heard in a year", "which tracks have never been played"
+    and the German equivalents answer from that record, with the most played
+    tracks, artists and genres, the newest listens and the forgotten ones.
+    A listed queue can be played ("play my most played").
+  * The answer is honest about its own limits: the record starts when the
+    feature first ran, so "never played" says *not played since <date>*, and
+    files that have left the library are counted but listed apart.
+  * Smart playlists can ask about listening: `min_plays`, `max_plays`
+    (`max_plays: 0` = never played) and `not_played_days`.  "make a smart
+    playlist of songs I never played" and "not heard in a year" build one,
+    and the record is only read when a rule asks for it.
+  * The window gains Settings → Library → **Listening history** with a 7-day,
+    31-day, one-year and all-time view plus the forgotten window; the data is
+    read-only (`GET /api/history`).
+
+ -- Julian Kunkel <julian@kunkel.de>  Thu, 26 Nov 2026 23:59:00 +0100
+
 jmp-ai-music-player (1.2.14-1) unstable; urgency=medium
 
   * An update no longer leaves the old code running behind the window.  The

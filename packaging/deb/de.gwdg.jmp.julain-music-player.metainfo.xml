@@ -103,6 +103,27 @@
   </branding>
 
   <releases>
+    <release version="1.2.15" date="2026-11-26">
+      <description>
+        <p>
+          The library remembers what was really listened to.  Every finished
+          listen becomes one row in a small play database under the app state;
+          a listen counts from twenty seconds, or half of a shorter track, and
+          never under five, so a skip is not a play and a replay counts again.
+          No audio file, tag or playlist is written.
+        </p>
+        <p>
+          “listening history”, “what did I play”, “my most played”, “what
+          haven't I heard in a year” and “which tracks have never been played”
+          answer from that record with the most played tracks, artists and
+          genres, the newest listens and the forgotten ones — and the answer
+          says when the record started, because “never played” can only mean
+          *not played since then*.  Smart playlists can ask the same question
+          as a rule (`min_plays`, `max_plays`, `not_played_days`), and
+          Settings → Library shows the history as a read-only panel.
+        </p>
+      </description>
+    </release>
     <release version="1.2.14" date="2026-11-26">
       <description>
         <p>
