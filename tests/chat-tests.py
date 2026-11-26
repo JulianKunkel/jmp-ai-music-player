@@ -4602,6 +4602,153 @@ def check_version(work: Path) -> None:
           '"$APP_DIR/VERSION"' in install, "")
 
 
+def check_track_state(work: Path) -> None:
+    """What the *playing* track still lacks — not a library-wide count."""
+    import sqlite3
+
+    lib = work / "track-state-library"
+    if lib.exists():
+        shutil.rmtree(lib)
+    build_library(lib)
+
+    unknown = "Artists/Nobody/Unmeasured/01_mystery.mp3"
+    path = lib / unknown
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 32)
+    # the catalogue finds it; neither database has a row for it
+    inventory = lib / "library-work" / "inventory" / "files.jsonl"
+    with inventory.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({
+            "rel_path": unknown, "title": "Mystery", "artist": "Nobody",
+            "albumartist": "Nobody", "album": "Unmeasured", "genre": "",
+            "grouping": "Bands", "duration_s": 120, "ext": ".mp3",
+            "track": "1"}) + "\n")
+
+    service = ChatService(root=lib, use_llm=False, auto_psycho=False)
+    try:
+        engine = service.engine
+        both = "Artists/Eisenwerk/Album/01_Track_1.mp3"
+        state = engine.track_state(both)
+        check("a measured, transcribed track misses nothing",
+              state["profile"] is True and state["lyrics"] is True
+              and state["lyrics_stale"] is False and state["missing"] == []
+              and state["summary"] == "", str(state))
+
+        only_profile = "Artists/Eisenwerk/Album/02_Track_2.mp3"
+        state = engine.track_state(only_profile)
+        check("a measured track names only its missing lyrics",
+              state["profile"] is True and state["lyrics"] is False
+              and state["missing"] == ["lyrics"]
+              and state["summary"].startswith("No lyrics"), str(state))
+
+        state = engine.track_state(unknown)
+        check("an unmeasured track names both gaps",
+              state["profile"] is False and state["lyrics"] is False
+              and state["missing"] == ["profile", "lyrics"]
+              and "not been analysed" in state["summary"]
+              and "no lyrics" in state["summary"], str(state))
+
+        empty = engine.track_state("")
+        check("no path is not an error",
+              empty["missing"] == [] and empty["summary"] == ""
+              and empty["profile"] is False, str(empty))
+
+        # the audio changed after the transcription, so the lines are old
+        stale = "Artists/Federleicht/Album/01_Track_1.mp3"
+        audio = lib / stale
+        audio.write_bytes(audio.read_bytes() + b"\x00" * 16)
+        state = engine.track_state(stale)
+        check("an older transcription is flagged, not called missing",
+              state["lyrics"] is True and state["lyrics_stale"] is True
+              and "lyrics" not in state["missing"]
+              and "earlier version" in state["summary"], str(state))
+
+        # a new row invalidates the cached answer without a restart
+        database = lib / "library-work" / "app" / "lyrics" / "lyrics.db"
+        stat = (lib / only_profile).stat()
+        conn = sqlite3.connect(database)
+        conn.execute(
+            "INSERT INTO track(rel_path, title, artist, album, duration_s, "
+            "language, model, backend, source_size, source_mtime, "
+            "transcribed_at, line_count, text) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (only_profile, "Track 2", "Eisenwerk", "Album", 180.0, "en",
+             "small", "faster-whisper", stat.st_size, f"{stat.st_mtime:.0f}",
+             "2026-11-26T00:00:00+00:00", 2, "one two"))
+        conn.commit()
+        conn.close()
+        state = engine.track_state(only_profile)
+        check("a transcription invalidates the cached answer",
+              state["lyrics"] is True and state["summary"] == "", str(state))
+
+        # the panels answer with the same per-track state
+        data = service.psycho("Artists/Eisenwerk/Album/03_Track_3.mp3")
+        check("/api/psycho carries the track state",
+              (data.get("track_state") or {}).get("lyrics") is False,
+              str(data.get("track_state")))
+        data = service.psycho(unknown)
+        check("/api/psycho without a profile still names the gaps",
+              data.get("error") == "no profile for this track yet"
+              and (data.get("track_state") or {}).get("missing")
+              == ["profile", "lyrics"], str(data.get("track_state")))
+        data = service.lyrics(unknown)
+        check("/api/lyrics carries the track state when no lines exist",
+              data.get("available") is False
+              and (data.get("track_state") or {}).get("profile") is False,
+              str(data.get("track_state")))
+        data = service.lyrics(both)
+        check("/api/lyrics says a transcribed track is complete",
+              data.get("available") is True
+              and (data.get("track_state") or {}).get("missing") == [],
+              str(data.get("track_state")))
+        check("the service answers the per-track state on its own",
+              service.track_state(unknown)["missing"]
+              == ["profile", "lyrics"], "")
+        check("the service falls back to the playing track",
+              service.track_state("")["rel"] == "", "")
+
+        # the chat says the same thing instead of only the library counts
+        engine.ctx.current = engine.catalog.track(unknown)
+        reply = engine._lyrics_show({})
+        check("the chat names the missing analysis with the missing lyrics",
+              "has no lyrics yet" in reply.text
+              and "Its sound has not been analysed yet either." in reply.text,
+              reply.text[:200])
+        engine.ctx.current = None
+        record, note = engine._psycho_axes(unknown)
+        check("the chat's no-profile answer adds this track's gaps",
+              record is None and "not been analysed" in note
+              and "no lyrics" in note, note[:200])
+
+        # the strip and the panels are wired to that answer
+        page = (LIB / "chat" / "webui" / "index.html").read_text(encoding="utf-8")
+        script = (LIB / "chat" / "webui" / "app.js").read_text(encoding="utf-8")
+        style = (LIB / "chat" / "webui" / "app.css").read_text(encoding="utf-8")
+        wire = (LIB / "chat" / "web.py").read_text(encoding="utf-8")
+        check("the status payload carries the per-track state",
+              '"track_state": track_state' in wire
+              and "self.engine.track_state(rel)" in wire, "")
+        check("the playing strip has a line for the gaps",
+              'id="np-gaps"' in page and "renderTrackGaps" in script
+              and ".np-gaps" in style, "")
+        check("the strip names both gaps and the stale case",
+              "not analysed" in script and "no lyrics" in script
+              and "lyrics out of date" in script, "")
+        check("the profile panel shows a chip per gap",
+              'gap.textContent = "not analysed"' in script
+              and 'gap.textContent = "no lyrics yet"' in script
+              and 'gap.textContent = "lyrics out of date"' in script, "")
+        check("the no-profile note adds the track's own sentence",
+              "data.track_state" in script and "state.summary" in script, "")
+        check("'partly estimated' needs a profile to be partly measured",
+              "record.estimated && trackState.profile !== false" in script, "")
+        check("the lyrics note names the missing analysis and transcriber",
+              "has not been analysed yet either" in script
+              and "No local transcriber is installed" in script, "")
+    finally:
+        service.engine.close()
+        shutil.rmtree(lib, ignore_errors=True)
+
+
 def check_smart(work: Path) -> None:
     """Smart playlists: rules, building, the journal and the chat routing."""
     from datetime import datetime, timedelta, timezone
@@ -8213,6 +8360,7 @@ def main() -> int:
         check_tagedit(work)
         check_cover(work)
         check_version(work)
+        check_track_state(work)
         check_smart(work)
         check_stats(work)
         check_formats(work)

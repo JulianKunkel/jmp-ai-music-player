@@ -647,6 +647,11 @@ class ChatService:
             else:
                 title = Path(file_name).name
                 artist = ""
+            # what the playing track itself still lacks (a sound profile and
+            # lyrics); the strip says that next to the artist instead of only
+            # quoting the library-wide counts.  Cached, so the 2 s poll is cheap.
+            track_state = (self.engine.track_state(rel)
+                           if (playing and rel) else None)
             payload = {
                 "playing": playing,
                 "paused": bool(raw.get("pause")),
@@ -654,6 +659,7 @@ class ChatService:
                 "artist": artist,
                 "rel": rel,
                 "art": _art_kind(self.engine.root, rel) if rel else "none",
+                "track_state": track_state,
                 "position": position,
                 "duration": duration,
                 "progress": (position / duration) if duration else 0.0,
@@ -1065,11 +1071,13 @@ class ChatService:
                 return {"rel": "", "lines": [], "available": False,
                         "error": "nothing is playing"}
             record = self.engine.lyrics.track(track.rel)
+            state = self.engine.track_state(track.rel)
             if record is None:
                 return {"rel": track.rel, "title": track.name,
                         "artist": track.who, "album": track.album,
                         "lines": [], "offset": 0.0, "available": False,
-                        "backend": lyrics_job.backend_info(self.root)}
+                        "backend": lyrics_job.backend_info(self.root),
+                        "track_state": state}
             path = self.root / track.rel
             current = False
             if path.is_file():
@@ -1083,7 +1091,21 @@ class ChatService:
                     "transcribed_at": record["transcribed_at"],
                     "lines": self.engine.lyrics.lines(track.rel),
                     "offset": self.engine.lyrics.offset(track.rel),
-                    "current": current, "available": True}
+                    "current": current, "available": True,
+                    "track_state": state}
+
+    def track_state(self, rel: str = "") -> dict:
+        """What one track still lacks — read-only, for the API and tests.
+
+        Without a ``rel`` the playing track is used, the same one the strip,
+        the profile panel and the lyrics panel speak about.
+        """
+        with self.lock:
+            rel = str(rel or "").strip()
+            if not rel:
+                track = self.engine._playing_track()
+                rel = track.rel if track is not None else ""
+            return self.engine.track_state(rel)
 
     def lyrics_status(self) -> dict:
         with self.lock:
@@ -2139,6 +2161,7 @@ class ChatService:
                         "sets": sets, "axes": self._psycho_axes(set_name)}
             record = self.engine.psycho.describe(track.rel, set_name)
             from .psycho import RAW
+            state = self.engine.track_state(track.rel, record)
             if record is None:
                 return {
                     "rel": track.rel, "title": track.name,
@@ -2149,6 +2172,9 @@ class ChatService:
                     "family": None, "families": [], "estimated": True,
                     "available": self.engine.psycho.available(),
                     "error": "no profile for this track yet",
+                    # what *this* file still lacks, so the panel can say that
+                    # instead of only quoting the library-wide counts
+                    "track_state": state,
                     "loudness": loudness.describe(self.engine.root, track.rel),
                     "fade": fade.describe(self.engine.profile),
                 }
@@ -2171,6 +2197,7 @@ class ChatService:
                 "estimated": bool(record.get("estimated")),
                 "families": families,
                 "available": True,
+                "track_state": state,
                 "loudness": loudness.describe(self.engine.root, track.rel),
                 "fade": fade.describe(self.engine.profile),
             }

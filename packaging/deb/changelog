@@ -1,3 +1,27 @@
+jmp-ai-music-player (1.2.9-1) unstable; urgency=medium
+
+  * The playing track now says what *it* still lacks.  "No profile for this
+    track yet" named one gap without saying whether the same file also has no
+    lyrics, and the panels only ever quoted library-wide counts.  A listener
+    looking at one song now sees that song's state: the now-playing strip
+    prints "not analysed · no lyrics" under the artist, the Profile panel
+    carries a chip per gap ("not analysed", "no lyrics yet", "lyrics out of
+    date"), and the Lyrics panel's note adds the missing analysis and whether
+    a local transcriber is installed at all.
+  * One computation answers all of them: Engine.track_state(rel) reports
+    profile, lyrics, lyrics_stale (a transcription from an earlier version of
+    the file), the missing list and a ready sentence.  It is read-only and
+    cached per file stamp plus the two database stamps (main file and -wal, so
+    a transcription really invalidates it), which is what lets the 2 s status
+    poll carry it.  /api/status, /api/psycho, /api/lyrics and the chat's
+    no-profile/no-lyrics answers all read the same result.
+  * A track that was never measured no longer claims "partly estimated";
+    that label now requires an existing profile.  A track that is fully
+    analysed and transcribed shows no gap at all.  Nothing is written to an
+    audio file, a tag, a playlist or a journal by any of these reads.
+
+ -- Julian Kunkel <julian@kunkel.de>  Thu, 26 Nov 2026 21:00:00 +0100
+
 jmp-ai-music-player (1.2.8-1) unstable; urgency=medium
 
   * The cover no longer silently disappears.  A Debian install runs on the

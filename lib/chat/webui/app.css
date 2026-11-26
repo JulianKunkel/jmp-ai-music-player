@@ -308,6 +308,16 @@ kbd {
   white-space: nowrap;
   margin-top: 2px;
 }
+/* per-track gaps: "not analysed · no lyrics", in the playing strip */
+.np-gaps {
+  margin-top: 3px;
+  font: 10.5px var(--mono);
+  color: var(--faint);
+  letter-spacing: .01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .statsline {
   display: flex;
@@ -1404,6 +1414,12 @@ kbd {
   font: 10.5px var(--mono); padding: 3px 8px; border-radius: 999px;
   color: #fcd34d; background: rgba(251, 191, 36, .1);
   border: 1px solid rgba(251, 191, 36, .25);
+}
+/* what this one track still lacks (not analysed, no lyrics yet) */
+.psycho-gap {
+  font: 10.5px var(--mono); padding: 3px 8px; border-radius: 999px;
+  color: var(--muted); background: var(--panel-2);
+  border: 1px dashed var(--line);
 }
 .psycho-setname {
   font: 10.5px var(--mono); padding: 3px 8px; border-radius: 999px;

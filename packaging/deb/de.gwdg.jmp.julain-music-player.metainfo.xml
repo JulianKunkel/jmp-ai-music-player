@@ -103,6 +103,21 @@
   </branding>
 
   <releases>
+    <release version="1.2.9" date="2026-11-26">
+      <description>
+        <p>
+          The playing track now says what it still lacks: the now-playing strip
+          prints "not analysed · no lyrics", the Profile panel shows a chip per
+          gap and the Lyrics panel names the missing analysis and whether a
+          local transcriber is installed.
+        </p>
+        <p>
+          One read-only per-track answer feeds the status poll, both panels and
+          the chat, and says when a transcription belongs to an older version
+          of the file.  Nothing in the library is rewritten.
+        </p>
+      </description>
+    </release>
     <release version="1.2.8" date="2026-11-26">
       <description>
         <p>

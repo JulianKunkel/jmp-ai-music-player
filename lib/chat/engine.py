@@ -21,6 +21,7 @@ from pathlib import Path
 
 from . import (endless, fade, index_job, library_job, lrc, lyrics_job,
                loudness, psycho_job, radio)
+from . import lyrics as lyrics_mod, psycho as psycho_mod
 from . import downloads as youtube, recent, session
 from . import version as version_mod
 from . import arrivals as arrivals_mod
@@ -86,6 +87,25 @@ def _escape(text: str) -> str:
     for char in ("\\", "*", "`", "[", "]"):
         text = str(text).replace(char, "\\" + char)
     return text
+
+
+def _file_stamp(path: Path) -> tuple[int, int]:
+    """(size, mtime_ns) of a file, or zeros — a cache key, never an error."""
+    try:
+        stat = path.stat()
+    except OSError:
+        return (0, 0)
+    return (stat.st_size, stat.st_mtime_ns)
+
+
+def _db_stamp(path: Path) -> tuple[int, ...]:
+    """A database stamp that moves when a write lands.
+
+    SQLite in WAL mode keeps new rows in ``-wal`` until a checkpoint, so the
+    main file's mtime can stay put after a transcription.  Reading both means
+    the per-track answer cannot outlive the row it describes.
+    """
+    return _file_stamp(path) + _file_stamp(path.with_name(path.name + "-wal"))
 
 
 def _short(text: str, limit: int = 42) -> str:
@@ -194,6 +214,9 @@ class Engine:
         self._last_pos = 0.0
         self._last_duration = 0.0
         self._observed: set[str] = set()
+        #: per-track "what is still missing" answers, keyed by file and database
+        #: stamps so a transcription or a measurement invalidates them
+        self._track_states: dict[tuple, dict] = {}
         self._youtube_pending: set[str] = set()
         self._youtube_at = 0.0
         #: the audio filter mpv currently holds (fade and levelling), so it is
@@ -3812,13 +3835,80 @@ class Engine:
             filled = 0
         return "▰" * filled + "▱" * (width - filled)
 
+    def track_state(self, rel: str, record: dict | None = None) -> dict:
+        """What *this one track* still lacks: a sound profile and lyrics.
+
+        A library-wide count ("13,199 of 17,486 measured") does not answer the
+        listener looking at the song that is playing, so the profile and lyrics
+        panels name the gaps of that file instead.  ``missing`` holds
+        ``profile`` and/or ``lyrics``; ``summary`` is the sentence the window
+        and the chat print; ``lyrics_stale`` means a transcription exists for an
+        older version of the audio.
+
+        Read-only, and cached per file stamp plus the two database stamps, so a
+        transcription or a measurement invalidates it without a restart.
+        """
+        rel = str(rel or "").strip()
+        result = {"rel": rel, "profile": False, "lyrics": False,
+                  "lyrics_stale": False, "lyrics_backend": False,
+                  "missing": [], "summary": ""}
+        if not rel:
+            return result
+        size, mtime = 0, 0.0
+        try:
+            stat = (self.root / rel).stat()
+            size, mtime = stat.st_size, stat.st_mtime
+        except OSError:
+            pass
+        key = (rel, size, mtime, _db_stamp(psycho_mod.db_path(self.root)),
+               _db_stamp(lyrics_mod.db_path(self.root)))
+        cached = self._track_states.get(key)
+        if cached is not None:
+            return dict(cached)
+        if record is None:
+            record = self.psycho.describe(rel)
+        axes = (record or {}).get("axes") or {}
+        analysed = any(value is not None for value in axes.values())
+        row = self.lyrics.track(rel)
+        has_lyrics = row is not None and int(row.get("line_count") or 0) > 0
+        stale = bool(has_lyrics and size
+                     and not self.lyrics.is_current(rel, size, mtime))
+        missing = []
+        if not analysed:
+            missing.append("profile")
+        if not has_lyrics:
+            missing.append("lyrics")
+        if not analysed and not has_lyrics:
+            summary = ("This track has not been analysed yet, and no lyrics "
+                       "have been transcribed for it.")
+        elif not analysed:
+            summary = "This track has not been analysed yet."
+        elif not has_lyrics:
+            summary = "No lyrics have been transcribed for this track yet."
+        elif stale:
+            summary = ("Its lyrics were transcribed for an earlier version of "
+                       "the file, so they may be out of date.")
+        else:
+            summary = ""
+        result.update(profile=analysed, lyrics=has_lyrics, lyrics_stale=stale,
+                      missing=missing, summary=summary,
+                      lyrics_backend=bool(
+                          lyrics_job.backend_info(self.root).get("ready")))
+        if len(self._track_states) > 512:
+            self._track_states.clear()
+        self._track_states[key] = dict(result)
+        return result
+
     def _psycho_axes(self, rel: str, set_name: str | None = None
                      ) -> tuple[dict | None, str]:
         record = self.psycho.describe(rel, set_name)
         if record is None:
-            return None, ("I have no profile for this track yet. Run "
-                          "`scripts/psycho_features.py --apply` and then "
-                          "`scripts/psycho_profile.py --apply`.")
+            state = self.track_state(rel)
+            extra = f" {state['summary']}" if state.get("summary") else ""
+            return None, ("I have no profile for this track yet."
+                          + extra
+                          + " The app can measure it in the background "
+                            "(Profile panel → Measure the library).")
         return record, ""
 
     def _psycho_markdown(self, track: Track, record: dict,
@@ -4374,9 +4464,12 @@ class Engine:
         row = self.lyrics.track(track.rel)
         path = self.root / track.rel
         if row is None:
+            state = self.track_state(track.rel)
+            extra = (" Its sound has not been analysed yet either."
+                     if not state.get("profile") else "")
             return Reply(
                 f"**{_escape(track.who)} — {_escape(track.name)}** has no "
-                "lyrics yet.\n\n"
+                f"lyrics yet.{extra}\n\n"
                 + self._lyrics_backend_hint()
                 + "\n\nAsk me to “transcribe this song” and I will do it in "
                   "the background.", tool="lyrics · show")
