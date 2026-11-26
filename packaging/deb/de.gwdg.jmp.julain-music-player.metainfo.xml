@@ -103,6 +103,16 @@
   </branding>
 
   <releases>
+    <release version="1.2.11" date="2026-11-26">
+      <description>
+        <p>
+          The release number is shown once: the chat greeting no longer repeats
+          it beside "JulAIn Music Player", so the badge in the window's top left
+          is the one place it appears.  Asking for the version (or /version)
+          still answers with the number and the file it was read from.
+        </p>
+      </description>
+    </release>
     <release version="1.2.10" date="2026-11-26">
       <description>
         <p>

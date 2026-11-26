@@ -1,3 +1,14 @@
+jmp-ai-music-player (1.2.11-1) unstable; urgency=medium
+
+  * The release is shown once: the chat greeting no longer repeats the build
+    number next to "JulAIn Music Player", so the top-left badge in the window
+    is the one place it appears.  `/version` (and asking "which version am I
+    running") still answers with the number and the file it was read from, and
+    the Diagnostics tab still lists it with the server's other build facts.
+  * No tag, playlist, journal or audio file is written.
+
+ -- Julian Kunkel <julian@kunkel.de>  Thu, 26 Nov 2026 22:40:00 +0100
+
 jmp-ai-music-player (1.2.10-1) unstable; urgency=medium
 
   * The per-track note now leads with what the track needs.  1.2.9 added the

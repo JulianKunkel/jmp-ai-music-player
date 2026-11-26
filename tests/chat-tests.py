@@ -4548,8 +4548,9 @@ def check_version(work: Path) -> None:
               make_handler(service, "version-token").server_version)
 
         engine = service.engine
-        check("the welcome line names the version",
-              shipped in engine.welcome(), "")
+        check("the welcome line does not repeat the version",
+              shipped not in engine.welcome()
+              and "/version" in engine.welcome(), "")
         reply = engine.handle("/version")
         check("/version answers with the number and its file",
               shipped in reply.text and "read from" in reply.text,

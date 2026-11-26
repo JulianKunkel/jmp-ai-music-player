@@ -508,7 +508,9 @@ class Engine:
     def _welcome(self) -> str:
         stats = self.catalog.stats()
         text = (
-            f"**JulAIn Music Player** {version_mod.app_version()} · "
+            # the release is shown once, in the window's top-left badge; the
+            # greeting repeats it only as the `/version` hint below
+            f"**JulAIn Music Player** · "
             f"{stats['files']:,} tracks · "
             f"{stats['hours']:,.0f} h · {stats['artists']:,} artists\n\n"
             "Tell me what you want to hear — a mood, a length, an artist — "
