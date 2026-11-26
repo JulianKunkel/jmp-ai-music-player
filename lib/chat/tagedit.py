@@ -210,46 +210,64 @@ def folder_files(root: Path, rel: str) -> list[Path]:
         return []
 
 
-def embedded_art(path: Path) -> tuple[str, bytes]:
-    """(MIME, bytes) of the first embedded picture, or ("", b"")."""
+def _embedded(path: Path) -> tuple[str, bytes, str]:
+    """(MIME, bytes, error) of the first embedded picture.
+
+    The third value separates the two cases that used to look the same: *this
+    file has no picture* (``""``) and *the reader itself is broken* — most
+    often mutagen missing from the interpreter the app runs on.  Swallowing the
+    second one is why a library full of covers could show none at all.
+    """
     ext = path.suffix.lower()
     try:
         if ext in {".mp3", ".mp2"}:
-            from mutagen.id3 import ID3
-            tag = ID3(str(path))
+            from mutagen.id3 import ID3, ID3NoHeaderError, error as ID3Error
+            try:
+                tag = ID3(str(path))
+            except ID3NoHeaderError:
+                return "", b"", ""
             for key in tag.keys():
                 if key.startswith("APIC"):
                     frame = tag[key]
-                    return str(frame.mime or "image/jpeg"), bytes(frame.data)
-            return "", b""
+                    return str(frame.mime or "image/jpeg"), bytes(frame.data), ""
+            return "", b"", ""
         from mutagen import File as MFile
         handle = MFile(str(path))
         if handle is None:
-            return "", b""
+            return "", b"", ""
         if ext in {".m4a", ".mp4", ".aac"}:
             covers = (handle.tags or {}).get("covr") or []
             if covers:
                 fmt = int(getattr(covers[0], "imageformat", 13) or 13)
                 return ("image/png" if fmt == 14 else "image/jpeg",
-                        bytes(covers[0]))
-            return "", b""
+                        bytes(covers[0]), "")
+            return "", b"", ""
         if ext == ".flac":
             pictures = getattr(handle, "pictures", None) or []
             if pictures:
                 return (str(pictures[0].mime or "image/jpeg"),
-                        bytes(pictures[0].data))
-            return "", b""
+                        bytes(pictures[0].data), "")
+            return "", b"", ""
         if ext in {".ogg", ".oga", ".opus"}:
             blocks = (handle.tags or {}).get("metadata_block_picture") or []
             if blocks:
                 from mutagen.flac import Picture
                 picture = Picture(base64.b64decode(blocks[0]))
                 return (str(picture.mime or "image/jpeg"),
-                        bytes(picture.data))
-            return "", b""
-    except Exception:                                     # noqa: BLE001
-        return "", b""
-    return "", b""
+                        bytes(picture.data), "")
+            return "", b"", ""
+    except ImportError as exc:
+        return "", b"", (f"the tag reader is missing from this Python "
+                         f"({exc}) — install python3-mutagen")
+    except Exception as exc:                              # noqa: BLE001
+        return "", b"", f"{type(exc).__name__}: {exc}"
+    return "", b"", ""
+
+
+def embedded_art(path: Path) -> tuple[str, bytes]:
+    """(MIME, bytes) of the first embedded picture, or ("", b"")."""
+    mime, data, _error = _embedded(path)
+    return mime, data
 
 
 def _image_mime(data: bytes) -> str:
@@ -269,45 +287,75 @@ def _image_mime(data: bytes) -> str:
     return ""
 
 
-def art_bytes(root: Path, rel: str) -> tuple[str, bytes]:
-    """(MIME, bytes) of a track's cover: inside the file first, then the folder.
+def art_read(root: Path, rel: str) -> dict:
+    """The cover of a track: ``mime``, ``data``, ``source`` and ``error``.
 
-    This is what the now-playing strip shows.  It only reads, and a path that
-    resolves outside the library is refused rather than read as a "cover".
+    ``source`` is ``embedded`` (a picture inside the file), ``folder`` (a cover
+    image next to the album) or ``none``.  ``error`` is set only when the read
+    itself failed — a missing tag reader, an unreadable picture.  The two cases
+    are kept apart on purpose: "this track has no cover" is a normal answer,
+    while "the reader is broken" has to be reportable, otherwise a library full
+    of covers shows none and nothing says why.
+
+    Only reads.  A path that resolves outside the library is refused instead
+    of being read as a "cover".
     """
+    result = {"mime": "", "data": b"", "source": "none", "error": ""}
     root = Path(root).resolve()
     rel = library_rel(str(rel or "").strip())
+    if not rel:
+        result["error"] = "no track was given"
+        return result
     try:
         path = (root / rel).resolve()
-    except (OSError, ValueError):
-        return "", b""
+    except (OSError, ValueError) as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        return result
     if not path.is_relative_to(root):
-        return "", b""
-    data = b""
+        # a request that tries to leave the library is refused, but it is not
+        # a broken reader: the route answers its ordinary "no cover" for it
+        return result
+    problem = ""
     if path.is_file():
-        _, data = embedded_art(path)
+        mime, data, problem = _embedded(path)
         if data:
-            mime = _image_mime(data)
-            if mime:
-                return mime, data
-    data = b""
-    folder = (root / album_folder(root, rel)).resolve()
+            sniffed = _image_mime(data)
+            if sniffed:
+                result.update(mime=sniffed, data=data, source="embedded")
+                return result
+    try:
+        folder = (root / album_folder(root, rel)).resolve()
+    except (OSError, ValueError) as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        return result
     if not folder.is_relative_to(root):
-        return "", b""
+        result["error"] = problem
+        return result
     cover = folder_cover(folder)
     if cover is None:
         names = str(row(root, rel).get("folder_image_names") or "").split(";")
         cover = next((folder / name for name in names
                       if name and (folder / name).is_file()), None)
+    data, read_error = b"", ""
     if cover is not None:
         try:
             data = cover.read_bytes()
-        except OSError:
-            data = b""
-    if not data:
-        return "", b""
-    mime = _image_mime(data)
-    return (mime, data) if mime else ("", b"")
+        except OSError as exc:
+            read_error = f"{type(exc).__name__}: {exc}"
+    if data:
+        sniffed = _image_mime(data)
+        if sniffed:
+            result.update(mime=sniffed, data=data, source="folder")
+            return result
+        read_error = f"{cover.name if cover else 'the cover'} is not a JPEG, PNG, GIF or WebP image"
+    result["error"] = problem or read_error
+    return result
+
+
+def art_bytes(root: Path, rel: str) -> tuple[str, bytes]:
+    """(MIME, bytes) of a track's cover — the old, quiet form of `art_read`."""
+    found = art_read(root, rel)
+    return found["mime"], found["data"]
 
 
 def art_state(root: Path, rel: str) -> dict:
@@ -317,10 +365,13 @@ def art_state(root: Path, rel: str) -> dict:
     path = root / rel
     info = row(root, rel)
     folder = root / album_folder(root, rel)
-    mime, data = embedded_art(path) if path.is_file() else ("", b"")
+    mime, data, error = _embedded(path) if path.is_file() else ("", b"", "")
     cover = folder_cover(folder)
     if not mime and int(info.get("art_count") or 0) > 0:
         mime = str(info.get("art_mime") or "").strip()
+        if not data and not error:
+            error = ("the inventory lists a picture in this file but this "
+                     "Python cannot read it")
     if not cover and info.get("folder_image_names"):
         names = str(info.get("folder_image_names") or "").split(";")
         cover = next((folder / name for name in names
@@ -346,6 +397,7 @@ def art_state(root: Path, rel: str) -> dict:
         "folder_path": (cover.relative_to(root).as_posix()
                         if cover is not None else ""),
         "preview": preview,
+        "error": error,
     }
 
 

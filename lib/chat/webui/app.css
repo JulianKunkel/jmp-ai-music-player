@@ -130,6 +130,24 @@ kbd {
   text-align: left;
 }
 
+/* the release, next to the name: small, but always there, so the version
+   never has to be guessed from a package manager */
+.brand-text .brand-version {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--line-soft);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+  vertical-align: 1px;
+  direction: ltr;
+}
+.brand-text .brand-version:empty { display: none; }
+
 .section-head {
   display: flex; align-items: center; justify-content: space-between;
   gap: 8px;

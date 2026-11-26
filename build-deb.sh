@@ -83,6 +83,8 @@ echo "Building ${PKG}_${DEBVERSION}_all.deb"
 say "application      /usr/lib/jmp"
 mkdir -p "$STAGE/usr/lib/jmp"
 cp -a "$HERE/lib" "$STAGE/usr/lib/jmp/lib"
+# the release number the app reports; chat/version.py reads it from here
+install -D -m 0644 "$HERE/VERSION" "$STAGE/usr/lib/jmp/VERSION"
 cp -a "$HERE/README.md" "$HERE/LICENSE" "$HERE/NOTICE" "$HERE/requirements.txt" \
       "$HERE/build-modules.py" "$STAGE/usr/lib/jmp/"
 mkdir -p "$STAGE/usr/lib/jmp/docs"

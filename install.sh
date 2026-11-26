@@ -698,6 +698,11 @@ do_it mkdir -p "$APP_DIR" "$BIN_HOME"
 # ---- app code ------------------------------------------------------------
 # the whole tree: top-level modules, the chat package and the skill documents
 do_it cp -a "$HERE/lib/." "$APP_DIR/"
+# the release number, read by chat/version.py from the folder that holds lib/
+# (the $APP_HOME/VERSION above is the installer's own record, not a version)
+if [ -f "$HERE/VERSION" ]; then
+    do_it cp -f "$HERE/VERSION" "$APP_DIR/VERSION"
+fi
 # drop modules of an older install that no longer exist in the source
 if [ "$DRY_RUN" = "0" ]; then
     for file in "$APP_DIR"/*.py; do

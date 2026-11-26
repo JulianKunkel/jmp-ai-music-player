@@ -531,6 +531,28 @@ def smart_rules(text: str) -> dict:
     return rules
 
 
+def version_question(text: str) -> bool:
+    """True for "which version of the app am I running?" — and nothing else.
+
+    A *version* on its own is a title ("the acoustic version", "Album Version"),
+    so the sentence must also say it is about the program, and a playback or
+    track word vetoes it.  "Version" alone never reaches this.
+    """
+    f = " " + " ".join(fold(text).split()) + " "
+    if not _has(f, "version", "release", "build", "ausgabe", "build number",
+                    "buildnummer", "versionsnummer"):
+        return False
+    if _has(f, "play", "spiele", "abspielen", "song", "songs", "track",
+            "tracks", "album", "alben", "cover", "remix", "acoustic",
+            "akustik", "live", "edit", "single", "lied", "titel", "stuck",
+            "stueck"):
+        return False
+    return _has(f, "app", "program", "programm", "player", "jmp", "julain",
+                "julian", "software", "binary", "package", "paket", "install",
+                "installed", "running", "runs", "laufende", "lauft", "laeuft",
+                "current", "currently", "aktuell")
+
+
 def stats_focus(text: str) -> str:
     """Which slice of the statistics a sentence asks for ("" = the whole).
 
@@ -1892,6 +1914,15 @@ def plan(text: str, ctx: Context, catalog, profile=None) -> Plan | None:
             return Plan("edit-playlist", {"action": "show",
                                           "playlist": playlist.name},
                         confidence=0.9)
+
+    # -- which release is this? -------------------------------------------
+    #
+    # Before the settings block: "which version of the app am I running" is a
+    # question about the build, and "version" in a title ("Album Version")
+    # never reaches here because a track word vetoes it.
+    if version_question(original):
+        return Plan("library-overview", {"action": "version"},
+                    confidence=0.9)
 
     # -- app settings ------------------------------------------------------
     #

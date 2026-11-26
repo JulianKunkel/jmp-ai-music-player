@@ -4340,6 +4340,44 @@ def check_cover(work: Path) -> None:
     check("an album without artwork has none",
           tagedit.art_bytes(lib, "Artists/Federleicht/Album/01_Track_1.mp3")
           == ("", b""), "")
+    found = tagedit.art_read(lib, "Artists/Eisenwerk/Album/01_Track_1.mp3")
+    check("art_read names the source of the picture it returns",
+          found["mime"] == "image/png" and found["data"] == embedded_png
+          and found["source"] == "embedded" and not found["error"],
+          str({key: found[key] for key in ("mime", "source", "error")}))
+    found = tagedit.art_read(lib, "Artists/Federleicht/Album/01_Track_1.mp3")
+    check("a track without art is 'none' and not an error",
+          found["source"] == "none" and not found["data"] and not found["error"],
+          str(found))
+
+    # the packaged app runs on the distribution Python, which may have no
+    # mutagen: that used to look exactly like "every track has no cover"
+    import builtins
+    real_import = builtins.__import__
+
+    def without_mutagen(name, *args, **kwargs):
+        if name == "mutagen" or name.startswith("mutagen."):
+            raise ImportError("No module named 'mutagen'")
+        return real_import(name, *args, **kwargs)
+
+    builtins.__import__ = without_mutagen
+    try:
+        missing = tagedit.art_read(
+            lib, "Artists/Federleicht/Album/01_Track_1.mp3")
+        quiet = tagedit.art_bytes(
+            lib, "Artists/Federleicht/Album/01_Track_1.mp3")
+        fallback = tagedit.art_read(
+            lib, "Artists/Eisenwerk/Album/02_Track_2.mp3")
+    finally:
+        builtins.__import__ = real_import
+    check("a missing tag reader is reported instead of 'no art'",
+          missing["data"] == b"" and "tag reader is missing" in missing["error"],
+          str(missing["error"]))
+    check("the quiet art_bytes form still answers ('', b'')",
+          quiet == ("", b""), str(quiet))
+    check("a folder cover is still served when the reader is missing",
+          fallback["data"] == folder_png and fallback["source"] == "folder"
+          and not fallback["error"], str(fallback["source"]))
     check("a path outside the library is never read as a cover",
           tagedit.art_bytes(lib, "../../../etc/passwd") == ("", b""), "")
     check("the type comes from the picture, not from its name",
@@ -4388,7 +4426,45 @@ def check_cover(work: Path) -> None:
         check("a cover path outside the library is refused",
               status == 404 and b"root:" not in body, f"{status} {body[:60]}")
         check("the service answers with the same bytes",
-              service.cover(rel) == ("image/png", embedded_png))
+              service.cover(rel)["data"] == embedded_png
+              and service.cover(rel)["mime"] == "image/png", "")
+
+        # a broken reader must not look like a track without art
+        original_cover = service.cover
+        service.cover = lambda got: {
+            "mime": "", "data": b"", "source": "none",
+            "error": "the tag reader is missing from this Python "
+                     "(simulated) — install python3-mutagen"}
+        errors_before = service.diagnostics.errors
+        status, body, _headers = get(f"/api/cover?rel={rel}")
+        check("a broken artwork reader answers 500 with the reason",
+              status == 500 and b"tag reader is missing" in body,
+              f"{status} {body[:90]}")
+        check("the failed cover is written to the error log",
+              service.diagnostics.errors == errors_before + 1
+              and (service.diagnostics.last_error or {}).get("error", "")
+              .find("tag reader is missing") >= 0,
+              str(service.diagnostics.last_error))
+        service.cover = original_cover
+
+        # the strip needs the rel even when the chat did not queue the track
+        engine = service.engine
+        original_status = engine.player.status
+        original_track = engine.catalog.track
+        engine.player.status = lambda: {
+            "file": str(first), "duration": 60, "time": 3,
+            "playlist_count": 1, "playlist_pos": 0, "volume": 50}
+        engine.catalog.track = lambda got: None
+        try:
+            playing = service.status()
+        finally:
+            engine.player.status = original_status
+            engine.catalog.track = original_track
+        check("the strip gets a rel for a queue the chat did not start",
+              playing.get("rel") == rel, str(playing.get("rel")))
+        check("the status names the artwork kind from the inventory",
+              playing.get("art") in {"embedded", "folder", "none"},
+              str(playing.get("art")))
 
         page = (LIB / "chat" / "webui" / "index.html").read_text(
             encoding="utf-8")
@@ -4419,6 +4495,111 @@ def check_cover(work: Path) -> None:
         httpd.server_close()
         service.engine.close()
         shutil.rmtree(lib, ignore_errors=True)
+
+
+def check_version(work: Path) -> None:
+    """The running release: one VERSION file, shown in window, API and chat."""
+    from chat import version
+    from chat import window as window_mod
+
+    lib = work / "version-library"
+    if lib.exists():
+        shutil.rmtree(lib)
+    build_library(lib)
+
+    shipped = (LIB.parent / "VERSION").read_text(encoding="utf-8").strip()
+    check("the VERSION file next to the code is the number the app reports",
+          version.app_version() == shipped,
+          f"{version.app_version()} vs {shipped}")
+    check("the reader also says where the number came from",
+          Path(version.app_version_file()).name == "VERSION"
+          and Path(version.app_version_file()).is_file(),
+          version.app_version_file())
+    info = version.info()
+    check("info() carries the number, the name and the interpreter",
+          info["version"] == shipped and info["name"] == "JulAIn Music Player"
+          and info["file"] and info["python"], str(info))
+    check("label() puts name and number on one line",
+          version.label() == f"JulAIn Music Player {shipped}",
+          version.label())
+    check("a plain number is a version, an installer record is not",
+          bool(version._PLAIN.match(shipped))
+          and version._PLAIN.match("app=jmp") is None
+          and version._PLAIN.match("1.2.8-1") is not None, "")
+    check("the standalone window reads the same file itself",
+          window_mod._app_version() == shipped
+          and shipped in window_mod.APP_LABEL, window_mod.APP_LABEL)
+
+    service = ChatService(root=lib, use_llm=False, auto_psycho=False)
+    try:
+        state = service.state()
+        check("/api/state carries the running version",
+              state["version"]["version"] == shipped,
+              str(state["version"].get("version")))
+        check("the state names the tag reader and its interpreter",
+              state["artwork"]["ok"] is True and state["artwork"]["python"],
+              str(state["artwork"]))
+        check("the diagnostics snapshot carries the version too",
+              service.diagnostics.snapshot(compact=True)["version"]["version"]
+              == shipped, "")
+        check("the HTTP server identifies itself with the release",
+              f"JulAInMusicPlayer/{shipped}"
+              in make_handler(service, "version-token").server_version,
+              make_handler(service, "version-token").server_version)
+
+        engine = service.engine
+        check("the welcome line names the version",
+              shipped in engine.welcome(), "")
+        reply = engine.handle("/version")
+        check("/version answers with the number and its file",
+              shipped in reply.text and "read from" in reply.text,
+              reply.text[:120])
+        reply = engine.handle("which version of the app am I running")
+        check("the chat answers a version question",
+              shipped in reply.text, f"{reply.tool} {reply.text[:120]}")
+
+        plan = nlu_plan("which version of the app am I running", engine.ctx,
+                        engine.catalog)
+        check("a version question is the build, not a search",
+              plan is not None and plan.skill == "library-overview"
+              and plan.args.get("action") == "version",
+              plan.skill if plan else "None")
+        plan = nlu_plan("what version of the program is installed",
+                        engine.ctx, engine.catalog)
+        check("'what version of the program' works as well",
+              plan is not None and plan.args.get("action") == "version",
+              plan.skill if plan else "None")
+        plan = nlu_plan("play the acoustic version", engine.ctx,
+                        engine.catalog)
+        check("a version in a title stays playback",
+              plan is not None and plan.skill != "library-overview",
+              plan.skill if plan else "None")
+        plan = nlu_plan("what version is this", engine.ctx, engine.catalog)
+        check("a bare 'what version is this' is not guessed as the app",
+              plan is None or plan.args.get("action") != "version",
+              plan.skill if plan else "None")
+    finally:
+        service.engine.close()
+        shutil.rmtree(lib, ignore_errors=True)
+
+    page = (LIB / "chat" / "webui" / "index.html").read_text(encoding="utf-8")
+    script = (LIB / "chat" / "webui" / "app.js").read_text(encoding="utf-8")
+    style = (LIB / "chat" / "webui" / "app.css").read_text(encoding="utf-8")
+    check("the window shows the version next to the name",
+          'id="brand-version"' in page and "els.brandVersion" in script
+          and ".brand-version" in style, "")
+    check("the diagnostics panel prints the version and the reader",
+          "data.version" in script and "data.artwork" in script, "")
+
+    build = (LIB.parent / "build-deb.sh").read_text(encoding="utf-8")
+    docker = (LIB.parent / "Dockerfile").read_text(encoding="utf-8")
+    install = (LIB.parent / "install.sh").read_text(encoding="utf-8")
+    check("the package ships VERSION next to the code",
+          "/usr/lib/jmp/VERSION" in build, "")
+    check("the image ships VERSION", "COPY VERSION /opt/music/VERSION" in docker,
+          "")
+    check("the host installer copies VERSION into lib/",
+          '"$APP_DIR/VERSION"' in install, "")
 
 
 def check_smart(work: Path) -> None:
@@ -8031,6 +8212,7 @@ def main() -> int:
         check_arrivals(work)
         check_tagedit(work)
         check_cover(work)
+        check_version(work)
         check_smart(work)
         check_stats(work)
         check_formats(work)

@@ -1,3 +1,37 @@
+jmp-ai-music-player (1.2.8-1) unstable; urgency=medium
+
+  * The cover no longer silently disappears.  A Debian install runs on the
+    distribution Python, which has no mutagen unless python3-mutagen is
+    installed; tagedit swallowed that ImportError, so every cover looked
+    absent and the strip kept its music-note icon even for a file with a real
+    embedded picture.  The reader now separates "this track has no art" from
+    "the reader failed": the first still answers 404 and keeps the icon, the
+    second answers 500 with the reason, is written to server-errors.log and
+    shows up in Diagnostics.  art_state() reports the same distinction in the
+    tag editor, and artwork_reader() tells the page which interpreter and
+    mutagen version it is running on.
+  * The cover request no longer depends on a track the chat queued.
+    GET /api/status now derives the library-relative path from the file mpv is
+    really playing, so a playlist, `music play` or a media key after a restart
+    also gets a picture; /api/status additionally carries art
+    (embedded|folder|none) from the inventory, so the page can tell a missing
+    cover from a failed read without opening the audio file.
+  * The page asks through fetch instead of an <img>, so the HTTP status is
+    known: a 404 is quiet, a 500 is recorded in the client error list and
+    named in the cover's tooltip.  The blob is shown only after it decoded.
+  * The running version is now visible in the app.  lib/chat/version.py reads
+    the VERSION file that ships next to the code (/usr/lib/jmp/VERSION in the
+    package, /opt/music/VERSION in the image, application/VERSION in a
+    checkout) and nothing else keeps a copy: the window shows it next to the
+    name and in its title, /api/state carries it, Diagnostics prints it with
+    the Python and mutagen it runs on, the chat answers /version and "which
+    version of the app am I running", and the HTTP Server header and the
+    planner's User-Agent identify themselves with it instead of a hardcoded
+    1.0.  A file without a plain number (the host installer's app=… record) is
+    ignored rather than shown as a version.
+
+ -- Julian Kunkel <julian@kunkel.de>  Thu, 26 Nov 2026 18:00:00 +0100
+
 jmp-ai-music-player (1.2.7-1) unstable; urgency=medium
 
   * The now-playing strip shows the cover art.  The box left of the title had

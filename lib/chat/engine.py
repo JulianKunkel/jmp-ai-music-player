@@ -22,6 +22,7 @@ from pathlib import Path
 from . import (endless, fade, index_job, library_job, lrc, lyrics_job,
                loudness, psycho_job, radio)
 from . import downloads as youtube, recent, session
+from . import version as version_mod
 from . import arrivals as arrivals_mod
 from . import duplicates as duplicates_mod
 from . import health
@@ -484,12 +485,14 @@ class Engine:
     def _welcome(self) -> str:
         stats = self.catalog.stats()
         text = (
-            f"**JulAIn Music Player** · {stats['files']:,} tracks · "
+            f"**JulAIn Music Player** {version_mod.app_version()} · "
+            f"{stats['files']:,} tracks · "
             f"{stats['hours']:,.0f} h · {stats['artists']:,} artists\n\n"
             "Tell me what you want to hear — a mood, a length, an artist — "
             "or ask me to add something.\n\n"
             + "\n".join(f"- “{example}”" for example in examples()[:6])
-            + "\n\n`/skills` shows every skill, `/llm` shows the planner."
+            + "\n\n`/skills` shows every skill, `/llm` shows the planner, "
+              "`/version` names this build."
             + "\n\n_Written with AI assistance · GPL-3.0-or-later · see NOTICE._"
         )
         return text
@@ -593,6 +596,8 @@ class Engine:
             return Reply("**Planner:** " + detail
                          + "\n\n`/llm off` uses only the offline parser.",
                          tool="llm")
+        if command in {"version", "about", "build"}:
+            return Reply(version_mod.markdown(self.root), tool="version")
         if command in {"stats", "status"}:
             if command == "status":
                 return self._execute(Plan("transport", {"action": "status"},
@@ -5135,6 +5140,8 @@ class Engine:
                          tool="library-overview · stats")
         if action in {"index", "status", "progress"}:
             return self.skill_index(args, request)
+        if action in {"version", "release", "build", "about"}:
+            return Reply(version_mod.markdown(self.root), tool="library-overview · version")
         stats = self.catalog.stats()
         genres = " · ".join(f"{_escape(name)} {count:,}"
                             for name, count in stats["genres"]) or "—"

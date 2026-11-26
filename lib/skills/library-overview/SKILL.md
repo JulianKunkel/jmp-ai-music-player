@@ -2,7 +2,7 @@
 name: library-overview
 description: Show the size, artists, genres, playlists and analysis state of the library.
 example: how big is my library?
-triggers: how many, stats, statistics, overview, library, was habe ich, wie viele, überblick
+triggers: how many, stats, statistics, overview, library, was habe ich, wie viele, überblick, version, release
 ---
 # Library overview
 
@@ -18,9 +18,17 @@ imported file is missing from the numbers, the library has not been re-indexed
 yet (`music index`, or the import does it).
 
 Arguments: `action` (`show` for this overview, `stats` for the statistics
-slice, `formats` for what the player can play, `health`, `index`, `status`)
-and `focus` (`genres`, `artists`, `albums`, `decades`, `formats`, `added`,
-`length`, `quality`, `playlists`, `coverage`).
+slice, `formats` for what the player can play, `health`, `index`, `status`,
+`version` for the running release) and `focus` (`genres`, `artists`, `albums`,
+`decades`, `formats`, `added`, `length`, `quality`, `playlists`, `coverage`).
+
+**Which build is this?**  `action: version` (also "which version of the app am
+I running", "what release is this", "welche version läuft") answers with the
+number from the `VERSION` file that ships next to the code, the path it was
+read from and the Python it runs on.  The same number is what the window shows
+next to its name, what `/api/state` reports and what the HTTP `Server` header
+uses; a title that merely contains the word ("play the acoustic version") is
+playback, not this.
 
 **What can you play?**  `action: formats` (also "can you play spc files?",
 "do you support flac", "which formats do you know", "kannst du spc

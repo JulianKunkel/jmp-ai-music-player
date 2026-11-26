@@ -103,6 +103,20 @@
   </branding>
 
   <releases>
+    <release version="1.2.8" date="2026-11-26">
+      <description>
+        <p>
+          The cover in the now-playing strip no longer disappears without a
+          reason: a missing tag reader (a Debian install without
+          python3-mutagen) is reported instead of looking like a track without
+          art, and the cover is also found for a queue the chat did not start.
+        </p>
+        <p>
+          The running release is visible in the window, in the API and in the
+          chat, read from the one VERSION file that ships with the code.
+        </p>
+      </description>
+    </release>
     <release version="1.2.7" date="2026-11-26">
       <description>
         <p>

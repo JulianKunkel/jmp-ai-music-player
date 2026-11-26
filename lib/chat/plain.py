@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .engine import Engine
+from .version import app_version
 
 
 def _markdown_to_text(text: str) -> str:
@@ -42,7 +43,7 @@ def run(root: Path | None = None, use_llm: bool = True, message: str | None = No
             print(f"[{reply.planner}]")
         return 1 if reply.error else 0
 
-    print("JulAIn Music Player — chat")
+    print(f"JulAIn Music Player {app_version()} — chat")
     print("-" * 26)
     print("Type a request, /skills for the list, /quit to leave.\n")
 

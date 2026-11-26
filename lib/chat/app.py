@@ -22,6 +22,7 @@ from textual.suggester import SuggestFromList
 from textual.widgets import Footer, Header, Input, Markdown, Static
 
 from .engine import Engine, Reply
+from .version import app_version
 from .skills import ORDER, examples, load
 
 
@@ -116,7 +117,7 @@ class ChatApp(App):
         self.engine = engine or Engine(root=root, use_llm=use_llm,
                                        dry_run=dry_run)
         self.welcome = welcome
-        self.title = "JulAIn Music Player"
+        self.title = f"JulAIn Music Player {app_version()}"
         self.sub_title = "chat"
         self._busy = False
 

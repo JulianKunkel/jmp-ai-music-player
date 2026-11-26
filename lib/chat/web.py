@@ -58,6 +58,7 @@ from . import radio
 from . import endless
 from . import settings as setting_registry
 from . import tagedit
+from . import version
 from . import voice
 from .viz import STYLES as VIZ_STYLES, spectrum as viz_spectrum, waveform
 
@@ -182,6 +183,28 @@ class Diagnostics:
             _append_log(self.request_log,
                         f"{stamp} {method} {path} -> {code} ({millis} ms)")
 
+    def note(self, message: str, path: str = "") -> None:
+        """Record a failure that was answered *without* an exception.
+
+        A route may answer a proper JSON error (a cover that cannot be read) and
+        still be a real fault; this puts it in the error log and in the recent
+        list without counting a second request.
+        """
+        text = str(message or "").strip()
+        if not text:
+            return
+        entry = {
+            "time": round(time.time(), 3),
+            "method": "GET", "path": path or "", "code": 500,
+            "ms": 0, "error": text,
+        }
+        with self.lock:
+            self.errors += 1
+            self.recent.append(entry)
+            self.last_error = entry
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(entry["time"]))
+        _append_log(self.error_log, f"{stamp} artwork {path} -> {text}")
+
     def snapshot(self, compact: bool = False) -> dict:
         with self.lock:
             data = {
@@ -199,6 +222,7 @@ class Diagnostics:
                 "log": str(self.error_log) if self.error_log else "",
                 "request_log": str(self.request_log) if self.request_log else "",
                 "debug": DEBUG,
+                "version": version.info(),
             }
             if not compact:
                 data["threads"] = threading.active_count()
@@ -516,6 +540,11 @@ class ChatService:
             psycho_ready = bool(families)
             return {
                 "root": str(self.root),
+                # the release that is really running, read from the VERSION
+                # file next to the code — one number for the window, the API
+                # and the chat
+                "version": version.info(),
+                "artwork": self.artwork_reader(),
                 "dry_run": bool(self.dry_run),
                 "stats": stats,
                 "planner": self._planner(),
@@ -595,17 +624,36 @@ class ChatService:
             playing = bool(raw) and not raw.get("idle")
             duration = float(raw.get("duration") or 0)
             position = float(raw.get("time") or 0)
-            if playing and current is not None:
-                title, artist = current.name, current.artist
+            # The strip's cover needs the library-relative path of whatever mpv
+            # is really playing.  ctx.current is only set for tracks the chat
+            # queued, so a queue started elsewhere (a playlist, `music play`,
+            # a media key after a restart) had no rel and therefore no cover.
+            rel = ""
+            file_name = str(raw.get("file") or "")
+            if playing and file_name:
+                try:
+                    rel = Path(file_name).resolve().relative_to(
+                        Path(self.engine.root).resolve()).as_posix()
+                except (ValueError, OSError):
+                    rel = ""
+            if playing and not rel and current is not None:
+                rel = current.rel
+            track = self.engine.catalog.track(rel) if rel else None
+            if playing and rel and track is not None:
+                title, artist = track.name, track.artist
+            elif playing and rel:
+                title = Path(rel).stem.replace("_", " ")
+                artist = ""
             else:
-                title = Path(str(raw.get("file") or "")).name
+                title = Path(file_name).name
                 artist = ""
             payload = {
                 "playing": playing,
                 "paused": bool(raw.get("pause")),
                 "title": title,
                 "artist": artist,
-                "rel": (current.rel if playing and current is not None else ""),
+                "rel": rel,
+                "art": _art_kind(self.engine.root, rel) if rel else "none",
                 "position": position,
                 "duration": duration,
                 "progress": (position / duration) if duration else 0.0,
@@ -709,13 +757,45 @@ class ChatService:
                 self.engine.catalog.reload()
             return result
 
-    def cover(self, rel: str) -> tuple[str, bytes]:
+    def cover(self, rel: str) -> dict:
         """The image the now-playing strip shows: embedded art, else the album.
+
+        Answers ``mime``/``data``/``source``/``error``; an empty ``data`` with
+        an ``error`` means the reader failed, which the route reports as a 500
+        instead of the 404 it sends for a track without any art.
 
         No lock: this reads one file (and one small image) and writes nothing,
         so a chat turn must not make the strip's cover wait.
         """
-        return tagedit.art_bytes(self.engine.root, rel)
+        return tagedit.art_read(self.engine.root, rel)
+
+    def artwork_reader(self) -> dict:
+        """Whether this interpreter can read tags at all.
+
+        The packaged app runs on the distribution Python, which has no mutagen
+        unless ``python3-mutagen`` is installed.  Without it every cover looks
+        absent, so the state and the Diagnostics tab say so outright.
+        """
+        cached = getattr(self, "_art_reader", None)
+        if cached is not None:
+            return dict(cached)
+        try:
+            import mutagen
+        except Exception as exc:                      # noqa: BLE001
+            result = {"ok": False, "version": "",
+                      "error": f"the tag reader is missing ({exc})",
+                      "python": sys.executable,
+                      "hint": "install python3-mutagen (or pip install mutagen)"}
+        else:
+            version_tuple = getattr(mutagen, "version", ()) or ()
+            try:
+                number = ".".join(str(part) for part in version_tuple)
+            except TypeError:
+                number = str(version_tuple)
+            result = {"ok": True, "version": number, "error": "",
+                      "python": sys.executable, "hint": ""}
+        self._art_reader = result
+        return dict(result)
 
     def set_artwork(self, payload: dict) -> dict:
         rel = str(payload.get("rel") or "").strip()
@@ -2244,6 +2324,27 @@ def _clock(seconds: float) -> str:
     return f"{seconds // 60}:{seconds % 60:02d}"
 
 
+def _art_kind(root, rel: str) -> str:
+    """``embedded`` / ``folder`` / ``none`` from the inventory row, not a read.
+
+    The status poll runs every two seconds, so it must not open the audio file;
+    the row the scan already wrote answers "should there be a cover here".  A
+    mismatch with `/api/cover` is exactly what the page reports, which is how a
+    broken reader stops looking like a track without art.
+    """
+    if not rel:
+        return "none"
+    try:
+        info = tagedit.row(root, rel)
+    except Exception:                                 # noqa: BLE001
+        return "none"
+    if bool(info.get("has_embedded_art")) or int(info.get("art_count") or 0) > 0:
+        return "embedded"
+    if int(info.get("folder_image_count") or 0) > 0 or info.get("folder_image_names"):
+        return "folder"
+    return "none"
+
+
 # ---------------------------------------------------------------------------
 # HTTP
 
@@ -2251,7 +2352,7 @@ def _clock(seconds: float) -> str:
 class Handler(BaseHTTPRequestHandler):
     service: ChatService
     token: str
-    server_version = "JulAInMusicPlayer/1.0"
+    server_version = f"JulAInMusicPlayer/{version.app_version()}"
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt: str, *args) -> None:
@@ -2421,7 +2522,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/diagnostics":
             # "Load failed" has no other explanation: this says how many
             # requests failed, what the last one was and where the log is
-            self._json(self.service.diagnostics.snapshot())
+            snapshot = self.service.diagnostics.snapshot()
+            snapshot["artwork"] = self.service.artwork_reader()
+            self._json(snapshot)
             return
         if path == "/api/settings":
             self._json(self.service.settings_view())
@@ -2487,13 +2590,24 @@ class Handler(BaseHTTPRequestHandler):
             if not rel or len(rel) > 500:
                 self._json({"error": "rel required"}, 400)
                 return
-            mime, data = self.service.cover(rel)
-            if not data:
-                # no artwork is not an error the page shows: the strip keeps
-                # its music-note icon, which is most of the chiptune shelves
-                self._json({"error": "no cover art"}, 404)
+            found = self.service.cover(rel)
+            if found.get("data"):
+                self._send(200, found["data"], found.get("mime") or "image/jpeg")
                 return
-            self._send(200, data, mime)
+            if found.get("error"):
+                # The track has (or should have) a picture but it could not be
+                # read: mutagen missing, an unreadable image.  This is a real
+                # failure, so it is reported and logged instead of looking like
+                # a track without art.
+                self.service.diagnostics.note(found["error"], f"/api/cover?rel={rel}")
+                self._json({"error": found["error"],
+                            "hint": ("a Debian install needs python3-mutagen; "
+                                     "the window's Diagnostics tab names the "
+                                     "interpreter it runs on")}, 500)
+                return
+            # no artwork is not an error the page shows: the strip keeps
+            # its music-note icon, which is most of the chiptune shelves
+            self._json({"error": "no cover art"}, 404)
             return
         if path == "/api/waveform":
             query = parse_qs(parsed.query)

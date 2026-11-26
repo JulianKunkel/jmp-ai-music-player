@@ -69,6 +69,8 @@ RUN groupadd -g "${USER_GID}" music 2>/dev/null || groupadd music \
 
 # the app itself: code only, no library, no venv, no caches
 COPY lib /opt/music/app
+# the release number, read by chat/version.py from the folder above the code
+COPY VERSION /opt/music/VERSION
 
 # Optional import modules.  `.build-modules` is empty in the open checkout;
 # build-image.sh / install.sh stage a module checkout there and pass

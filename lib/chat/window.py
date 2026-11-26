@@ -26,6 +26,7 @@ import os
 import sys
 import threading
 import time
+from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 from urllib.request import Request, urlopen
 
@@ -50,6 +51,32 @@ MEDIA_HOST = _sibling("media_keys_host.py")
 
 APP_ID = "julians-music-app"
 APP_TITLE = "JulAIn Music Player"
+
+
+def _app_version() -> str:
+    """The release this window belongs to, from the VERSION file next to it.
+
+    `window.py` is standalone on purpose (it imports nothing from the package),
+    so it reads the same file itself instead of importing `chat/version.py`.  A
+    missing file is not fatal: the title then stays the plain name.
+    """
+    here = Path(__file__).resolve()
+    for candidate in (here.parent.parent / "VERSION",
+                      here.parent.parent.parent / "VERSION"):
+        try:
+            text = candidate.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        first = next((line.strip() for line in text.splitlines()
+                      if line.strip()), "")
+        if first and len(first) <= 40 and first[0].isdigit():
+            return first
+    return ""
+
+
+_APP_VERSION = _app_version()
+#: what the window and the desktop's media menu call this build
+APP_LABEL = f"{APP_TITLE} {_APP_VERSION}" if _APP_VERSION else APP_TITLE
 #: the page and the window must speak the same host-bridge protocol; a page
 #: from a newer package can otherwise test through a window that has no probe
 BRIDGE_VERSION = 2
@@ -691,7 +718,7 @@ class _Media:
 
         if iface == MPRIS_ROOT:
             root = {
-                "Identity": GLib.Variant("s", APP_TITLE),
+                "Identity": GLib.Variant("s", APP_LABEL),
                 "DesktopEntry": GLib.Variant("s", APP_ID),
                 "CanQuit": GLib.Variant("b", False),
                 "CanRaise": GLib.Variant("b", True),
@@ -776,7 +803,7 @@ def _gtk3(url: str) -> None:
         pass
 
     window = Gtk.Window()
-    window.set_title(APP_TITLE)
+    window.set_title(APP_LABEL)
     window.set_default_size(*WINDOW_SIZE)
     # a minimum size, so shrinking the window cannot clip the tabs or the
     # settings panel; GTK asks the toplevel before it lets the WM resize it
@@ -832,7 +859,7 @@ def _gtk4(url: str) -> None:
     Gtk.init()
 
     window = Gtk.Window()
-    window.set_title(APP_TITLE)
+    window.set_title(APP_LABEL)
     window.set_default_size(*WINDOW_SIZE)
     # a minimum size, so shrinking the window cannot clip the tabs or the
     # settings panel; GTK asks the toplevel before it lets the WM resize it

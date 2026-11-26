@@ -34,6 +34,7 @@ import urllib.request
 from pathlib import Path
 
 from .settings import PROVIDER_BASE, PROVIDER_KEYS, read_secrets
+from .version import app_version
 from .skills import REGISTRY, skills_prompt
 
 TIMEOUT = 45
@@ -229,7 +230,7 @@ class LLM:
             headers={
                 "Authorization": f"Bearer {key}",
                 "Content-Type": "application/json",
-                "User-Agent": "JulAIn-Music-Player/1.0",
+                "User-Agent": f"JulAIn-Music-Player/{app_version()}",
             },
             method="GET",
         )
@@ -549,7 +550,7 @@ Learned profile: {profile.compact()}"""
             headers={
                 "Authorization": f"Bearer {self.config['api_key']}",
                 "Content-Type": "application/json",
-                "User-Agent": "JulAIn-Music-Player/1.0",
+                "User-Agent": f"JulAIn-Music-Player/{app_version()}",
             },
             method="POST",
         )
