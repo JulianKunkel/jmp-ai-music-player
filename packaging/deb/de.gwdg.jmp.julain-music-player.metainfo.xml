@@ -103,6 +103,18 @@
   </branding>
 
   <releases>
+    <release version="1.2.6" date="2026-11-26">
+      <description>
+        <p>
+          Tracks now blend at the join instead of cutting: a short fade out and
+          in, as a playback filter that never touches the audio file.  Two
+          settings in the Playback group switch it on or off and choose the
+          length, the chat understands "turn the fading off" and "fade the
+          songs out over 5 seconds", and switching it off restores the
+          untouched sound.
+        </p>
+      </description>
+    </release>
     <release version="1.2.5" date="2026-11-22">
       <description>
         <p>

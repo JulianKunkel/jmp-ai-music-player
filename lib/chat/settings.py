@@ -207,6 +207,22 @@ SPECS: tuple[dict, ...] = (
           "Pull every track towards one loudness while it plays, using the "
           "measured level.  The audio files are never rewritten.",
           choices=_CHOICES["loudness_level"]),
+    _spec("fade_songs", "Soft endings (fade)", "bool", "Playback", True,
+          ("soft endings", "soft ending", "fading", "fade songs",
+           "fade the songs", "fade out", "fade-out", "fade", "crossfade",
+           "cross fade", "sanftes ausblenden", "ausblenden", "ueberblenden",
+           "überblenden", "sanfter uebergang", "sanfter übergang",
+           "weiches ende"),
+          "Ease the last seconds of every track out and the next one in, so "
+          "tracks blend instead of cutting.  Playback only; the audio files "
+          "are never rewritten."),
+    _spec("fade_seconds", "Fade length", "int", "Playback", 3,
+          ("fade length", "fade duration", "fade time", "fade seconds",
+           "crossfade length", "crossfade duration", "length of the fade",
+           "dauer des ausblendens", "ausblenddauer", "laenge des ausblendens",
+           "länge des ausblendens", "ueberblenddauer", "überblenddauer"),
+          "How many seconds a track eases out (1–10).",
+          minimum=1, maximum=10),
     _spec("psycho_auto", "Measure new tracks automatically", "bool",
           "Sound profile", True,
           ("automatic measurement", "auto measurement", "auto measure",
@@ -646,8 +662,22 @@ def parse(text: str) -> dict | None:
         r"\s*(?:is|are|was|were|does|do|did|how|what|which|who|where|why|"
         r"can|could|should|would|ist|sind|war|waren|wie|welche|welcher|"
         r"welches|wo|warum|kann|soll)\b", flat))) and not verb
+    if key == "fade_songs" and re.search(
+            r"(?<!\w)(?:how long|wie lang(?:e)?|welche lange)(?!\w)", flat):
+        # “how long is the fade” asks for the length, not for the switch
+        return {"action": "show", "key": "fade_seconds"}
     if question:
         return {"action": "show", "key": key}
+    if key == "fade_songs":
+        # "fade the songs out over 4 seconds" names the pair, not only the
+        # switch: a number sets the length and switches the fading on
+        count = re.search(r"(?<!\d)(\d{1,2})(?!\d)", flat)
+        refused = any(
+            re.search(rf"(?<!\w){re.escape(fold(word))}(?!\w)", padded)
+            for word in _FALSE_WORDS)
+        if count and not refused:
+            return {"action": "set", "key": "fade_songs", "value": True,
+                    "also": {"fade_seconds": int(count.group(1))}}
     if any(re.search(rf"(?<!\w){re.escape(word)}(?!\w)", padded)
            for word in _RESET_WORDS) and not re.search(r"(?<!\d)\d{1,3}(?!\d)",
                                                        padded):

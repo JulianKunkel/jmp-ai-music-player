@@ -19,8 +19,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from . import (endless, index_job, library_job, lrc, lyrics_job, loudness,
-               psycho_job, radio)
+from . import (endless, fade, index_job, library_job, lrc, lyrics_job,
+               loudness, psycho_job, radio)
 from . import downloads as youtube, recent, session
 from . import arrivals as arrivals_mod
 from . import duplicates as duplicates_mod
@@ -133,6 +133,14 @@ def _wants_playback(text: str) -> bool:
                for word in PLAYBACK_WORDS)
 
 
+def _number(value) -> float:
+    """A float from a tag, a status field or a setting, or 0.0."""
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _number_tracks(tracks: list[Track], limit: int = 12,
                    show_path: bool = True) -> str:
     lines = []
@@ -187,8 +195,12 @@ class Engine:
         self._observed: set[str] = set()
         self._youtube_pending: set[str] = set()
         self._youtube_at = 0.0
-        #: the audio filter mpv currently holds, so it is set only on a change
-        self._loudness_filter: str | None = None
+        #: the audio filter mpv currently holds (fade and levelling), so it is
+        #: set only on a change; `_filter_rel` is the track it belongs to
+        self._audio_filter: str | None = None
+        self._filter_rel = ""
+        #: an mpv build without `lavfi`/`afade` — levelling only, no retries
+        self._fade_broken = False
         #: the export the last preview/import named, so "import it" works
         self._library_file = ""
         #: the random source the radio picks with (one per engine)
@@ -1057,6 +1069,10 @@ class Engine:
                                       shuffle=shuffle)
         if ok:
             rel = self._rel_of(str(path))
+            # a new queue starts now, so let its first track fade in.  An
+            # append must not touch the filter the playing track holds.
+            if not append:
+                self._apply_audio_filter(rel)
             # an ad-hoc list stays "the current queue" until something else is
             # played; anything else ends it, so the window drops save/remove
             self.ctx.last_own = rel if rel.startswith("Playlists/Own/") else ""
@@ -4807,6 +4823,12 @@ class Engine:
             self.llm.enabled = bool(self.profile.setting("use_llm", True))
         elif key.startswith("llm_"):
             self.llm.reconfigure()
+        elif key in {"fade_songs", "fade_seconds", "loudness_level"}:
+            # the audio filter reads these live, but re-derive it now so a
+            # switch does not wait for the next two-second status poll
+            self._apply_audio_filter(self._last_rel,
+                                     {"time": self._last_pos,
+                                      "duration": self._last_duration})
 
     def _settings_library(self, value: str) -> Reply:
         target = Path(value).expanduser()
@@ -5175,10 +5197,11 @@ class Engine:
             self._last_duration = float(status.get("duration") or 0)
         except (TypeError, ValueError):
             pass
-        # levelling: an mpv audio filter derived from the stored measurement,
-        # so a quiet rip and a loud master sit at the same level.  The audio
-        # file is never rewritten; the filter is just playback state.
-        self._apply_loudness(rel)
+        # levelling and soft endings: one audio filter derived from the stored
+        # measurement and the fade setting, so a quiet rip and a loud master
+        # sit at the same level and tracks blend at the join.  The audio file
+        # is never rewritten; the filter is just playback state.
+        self._apply_audio_filter(rel, status)
         # radio mode: a queue that never runs dry
         self._endless_tick(status)
         self._radio_tick(status)
@@ -5187,18 +5210,63 @@ class Engine:
         self.save_session(status=status)
         return status
 
-    def _apply_loudness(self, rel: str) -> None:
-        """Keep mpv's audio filter in step with the track and the setting."""
+    def _apply_audio_filter(self, rel: str,
+                            status: dict | None = None) -> None:
+        """Keep mpv's audio filter in step with the track and the settings.
+
+        One `af` value carries both the soft ending and the loudness
+        levelling, because mpv has a single property for it.  It is playback
+        state only — no audio file is rewritten.
+        """
         if not self.player.running():
-            self._loudness_filter = None    # a fresh daemon starts clear
+            self._audio_filter = None       # a fresh daemon starts clear
+            self._filter_rel = ""
             return
         level = str(self.profile.setting("loudness_level", "off") or "off")
-        wanted = (loudness.filter_for(self.root, rel)
-                  if level == "track" and rel else "")
-        if wanted == self._loudness_filter:
+        gain = (loudness.filter_for(self.root, rel)
+                if level == "track" and rel else "")
+        seconds = fade.seconds_from(self.profile)
+        graph = ""
+        duration = 0.0
+        if seconds > 0 and not getattr(self, "_fade_broken", False):
+            # the inventory length decides where the out-fade begins; the
+            # status is only the fallback for a file the scan does not know
+            duration = self._track_duration(rel, status)
+            graph = fade.filter_for(seconds, duration)
+        position = _number((status or {}).get("time"))
+        wanted = fade.chain(graph, gain)
+        if wanted == self._audio_filter:
+            self._filter_rel = rel
             return
-        setter = getattr(self.player, "set_loudness", None)
+        if fade.inside(seconds, duration, position):
+            # the playhead is already in the fade window: dropping the filter
+            # in now would cut the ending, so it waits for the next track
+            return
+        setter = (getattr(self.player, "set_audio_filter", None)
+                  or getattr(self.player, "set_loudness", None))
         if setter is None:                  # a stub player in a test
             return
-        if setter(wanted)[0]:
-            self._loudness_filter = wanted
+        ok, _message = setter(wanted)
+        if not ok and wanted != gain:
+            # mpv refused the fade graph (an old build without lavfi/afade):
+            # keep the levelling, and stop trying for this daemon
+            self._fade_broken = True
+            ok, _message = setter(gain)
+            wanted = gain
+        self._filter_rel = rel
+        self._audio_filter = wanted if ok else None
+
+    def _track_duration(self, rel: str, status: dict | None = None) -> float:
+        """The length the fade is planned against: inventory first."""
+        track = None
+        catalog = getattr(self, "catalog", None)
+        if rel and catalog is not None:
+            try:
+                track = catalog.track(rel)
+            except (KeyError, OSError, ValueError):
+                track = None
+        if track is not None:
+            value = _number(getattr(track, "duration_s", 0))
+            if value > 0:
+                return value
+        return _number((status or {}).get("duration"))

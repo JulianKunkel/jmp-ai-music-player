@@ -129,11 +129,13 @@ class Player:
             return False, str(exc)
 
     @_serialised
-    def set_loudness(self, value: str) -> tuple[bool, str]:
+    def set_audio_filter(self, value: str) -> tuple[bool, str]:
         """Set mpv's audio filter; an empty value restores the raw audio.
 
-        The levelling is a playback filter, never a rewrite of the file, so it
-        disappears with the daemon and leaves the library untouched.
+        One property carries everything the app filters in: the loudness
+        levelling and the soft ending.  It is playback state, never a rewrite
+        of the file, so it disappears with the daemon and leaves the library
+        untouched.
         """
         if not self.running():
             return False, "nothing is playing"
@@ -142,6 +144,10 @@ class Player:
             return True, ""
         except (MpvError, OSError, ValueError) as exc:
             return False, str(exc)
+
+    #: the older name, kept so a caller (or a test stub) written before the
+    #: fade still works
+    set_loudness = set_audio_filter
 
     @_serialised
     def status(self) -> dict | None:

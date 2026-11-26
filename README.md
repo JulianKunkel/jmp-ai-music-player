@@ -130,8 +130,9 @@ What that buys you in the window: a **net diagram** per song, a *Profile*
 button, comparisons ("find music similar to this but faster", "find
 something 20 % faster"), rankings ("the 10 most aggressive tracks"), an explanation for
 each rank, generated **sound-family playlists**, and optional loudness
-levelling toward −16 LUFS without touching a single audio file.  Mood and focus
-lists are built from the same measurements.
+levelling toward −16 LUFS and soft endings (a short fade out and in) without
+touching a single audio file.  Mood and focus lists are built from the same
+measurements.
 
 Honest limits: the axes are relative to *this* library, tempo floors at 60 BPM,
 the instrument set is a band-share heuristic rather than a trained classifier,
@@ -153,7 +154,7 @@ forms are shown where they differ in structure.
 | **What the player can do** | "can you play spc files?", "do you support flac", "is sid supported", "which formats can you play", "kannst du spc abspielen" — answered from a format table, including the ones that play but carry no tags and the ones the library lists but ffmpeg cannot decode |
 | **Import** *(optional module)* | "search the import source for <words>", "download 2", "download all", "retry the download", "clear the failed download", "add <url> to my library" — these need a build with an import module; without one the chat says so |
 | **Playlist import** | "import all playlists from ~/Downloads/playlists", "import this spotify playlist <link>" |
-| **Settings and upkeep** | "show the settings", "turn off the visualizer", "turn off the daily backup", "keep the last 5 backups", "use gwdg with api key sk-…", "change the music folder to /home/me/Musik", "index the library", "pause the indexing", "measure the library", "transcribe all songs without lyrics" |
+| **Settings and upkeep** | "show the settings", "turn off the visualizer", "turn off the fading", "set the fade length to 6", "turn off the daily backup", "keep the last 5 backups", "use gwdg with api key sk-…", "change the music folder to /home/me/Musik", "index the library", "pause the indexing", "measure the library", "transcribe all songs without lyrics" |
 | **Feedback and learning** | "I like this", "I don't like this", "das gefällt mir", "when I say sunday I mean chill and jazz", "that worked, remember it" |
 
 Two rules the chat keeps: a **lookup lists, only a play word plays**, and it
@@ -1027,6 +1028,25 @@ rewrites the compose file) or edit
 If PulseAudio refuses the connection, the cookie path is usually the reason —
 check that `~/.config/pulse/cookie` existed at install time, or add the mount
 by hand.
+
+### Soft endings and loudness levelling
+
+Two playback settings shape the sound without touching a file, both in
+**Settings → Playback** and both reachable from the chat:
+
+| setting | what it does |
+|---|---|
+| **Soft endings (fade)** (`fade_songs`, on) | eases the last seconds of every track out and the next one in, so tracks blend instead of cutting |
+| **Fade length** (`fade_seconds`, 3 s) | how long the out-fade runs (1–10 s) |
+| **Loudness levelling** (`loudness_level`, off) | pulls each track towards −16 LUFS using the measured level, clamped to ±12 dB |
+
+Say "turn the fading off", "enable soft endings", "set the fade length to 6" or
+"fade the songs out over 5 seconds"; "ausblenden nach 4 sekunden" works too.
+The fade is an mpv audio filter (`lavfi=[afade=…]`), so it is a **dip**: the
+out-fade ends where the track ends and the in-fade starts at the next track's
+0, with a brief silence at the join.  mpv has no overlapping crossfade, so this
+is the honest limit.  Turning the setting off restores the untouched sound, and
+the audio files keep their original bytes either way.
 
 ## Privacy and licence
 

@@ -1,3 +1,34 @@
+jmp-ai-music-player (1.2.6-1) unstable; urgency=medium
+
+  * Tracks blend at the join instead of cutting.  An mpv audio filter
+    (lavfi=[afade=…]) takes the last seconds of every track down and the first
+    fraction of the next one up; because mpv already plays consecutive tracks
+    without a gap, the two touch and the join reads as a soft dip.  It is a
+    playback filter exactly like the loudness levelling — no audio file, tag or
+    playlist is rewritten, and switching it off restores the untouched sound.
+    lib/chat/fade.py builds the filter (pure, no mpv) and
+    Engine._apply_audio_filter carries it together with the levelling gain,
+    because mpv has a single `af` property; `music play` builds the same filter
+    so a command-line play sounds like a click in the window.
+  * Two new settings in the Playback group: Soft endings (fade_songs, on) and
+    Fade length (fade_seconds, 1–10 s, default 3).  Both are reachable from the
+    chat: "turn the fading off", "enable soft endings", "set the fade length to
+    6", "fade the songs out over 5 seconds", "ausblenden nach 4 sekunden", "how
+    long is the fade".  A number in a fade sentence sets the length and turns
+    the fading on.
+  * The out-fade is capped at a third of the track (and a track shorter than
+    2.5 s gets none), so a short interlude is never swallowed; the engine waits
+    for the next track when the playhead is already inside the fade window
+    rather than cutting the ending in.  An mpv build without lavfi/afade
+    degrades to levelling only instead of failing to play.
+  * Honest limit, written down rather than glossed over: this is a dip, not an
+    overlapping crossfade — mpv has none — and the in-fade of an auto-advanced
+    track is corrected by the two-second status poll.
+  * New headless checks: check_fade covers the filter graph, the cap, `inside`,
+    the chaining with the gain, the settings parse and the chat sentences.
+
+ -- Julian Kunkel <julian@kunkel.de>  Thu, 26 Nov 2026 12:00:00 +0100
+
 jmp-ai-music-player (1.2.5-1) unstable; urgency=medium
 
   * Capability questions are answered instead of searched.  "can you play spc

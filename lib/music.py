@@ -122,6 +122,41 @@ def library_rel(rel_path: str) -> str:
     return rel_path[len("Music/"):] if rel_path.startswith("Music/") else rel_path
 
 
+def soft_ending(target: str) -> str:
+    """The fade filter `music play` hands mpv, from the app's own settings.
+
+    The window applies the same filter from its status poll; this keeps a
+    command-line play sounding like a click in the app.  A playlist, a URL or
+    a file outside the library simply gets none.
+    """
+    try:
+        from chat import fade
+        from chat.profile import Profile
+
+        path = Path(target).expanduser()
+        if not path.is_absolute():
+            path = ROOT / path
+        # a playlist, a stream URL or a file outside the library gets none:
+        # the filter would sit on the queue, not on one song
+        if not path.is_file() or path.suffix.lower() not in AUDIO_EXT:
+            return ""
+        rel = path.resolve().relative_to(ROOT.resolve()).as_posix()
+        seconds = fade.seconds_from(Profile(ROOT))
+        if seconds <= 0:
+            return ""
+        duration = 0.0
+        for row in inventory_rows():
+            if library_rel(str(row.get("rel_path") or "")) == rel:
+                try:
+                    duration = float(row.get("duration_s") or 0)
+                except (TypeError, ValueError):
+                    duration = 0.0
+                break
+        return fade.filter_for(seconds, duration)
+    except (OSError, ValueError, ImportError):
+        return ""
+
+
 def score_row(row: dict, tokens: list[str]) -> float | None:
     artist = (row.get("artist") or row.get("albumartist") or "").casefold()
     title = (row.get("title") or "").casefold()
@@ -228,6 +263,13 @@ def cmd_play(args) -> int:
     target, _ = resolve_target(args.target, args.first)
     pc = player(args)
     pc.start(audio=args.audio, volume=args.volume)
+    if not args.append:
+        graph = soft_ending(target)
+        if graph:
+            try:
+                pc.set("af", graph)
+            except (MpvError, ValueError):
+                pass                        # an old mpv: play untouched
     pc.load(target, append=args.append)
     if args.shuffle:
         pc.cmd("playlist-shuffle")

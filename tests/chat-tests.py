@@ -1542,26 +1542,28 @@ def check_loudness(work: Path) -> None:
             return True, ""
 
     engine = SimpleNamespace(
-        root=lib, player=FakeLoudPlayer(), _loudness_filter=None,
+        root=lib, player=FakeLoudPlayer(), _audio_filter=None,
+        _filter_rel="", _fade_broken=False,
+        _track_duration=lambda rel, status=None: 0.0,
         profile=SimpleNamespace(setting=lambda key, default=None: setting[0]))
     setting = ["track"]
-    Engine._apply_loudness(engine, "A/quiet.mp3")
+    Engine._apply_audio_filter(engine, "A/quiet.mp3")
     check("the engine hands the filter to the player",
           engine.player.filters == ["volume=4.0dB"],
           str(engine.player.filters))
-    Engine._apply_loudness(engine, "A/quiet.mp3")
+    Engine._apply_audio_filter(engine, "A/quiet.mp3")
     check("the same filter is not set twice",
           engine.player.filters == ["volume=4.0dB"],
           str(engine.player.filters))
     setting[0] = "off"
-    Engine._apply_loudness(engine, "A/quiet.mp3")
+    Engine._apply_audio_filter(engine, "A/quiet.mp3")
     check("switching levelling off clears the filter",
           engine.player.filters == ["volume=4.0dB", ""],
           str(engine.player.filters))
     engine.player.running_state = False
-    Engine._apply_loudness(engine, "A/quiet.mp3")
+    Engine._apply_audio_filter(engine, "A/quiet.mp3")
     check("a stopped player forgets the filter for the next daemon",
-          engine._loudness_filter is None, str(engine._loudness_filter))
+          engine._audio_filter is None, str(engine._audio_filter))
     shutil.rmtree(lib, ignore_errors=True)
 
     from chat import settings as registry
@@ -1578,6 +1580,188 @@ def check_loudness(work: Path) -> None:
             check(f"“{sentence}” sets the levelling",
                   bool(plan) and plan.get("key") == "loudness_level"
                   and plan.get("value") == level, str(plan))
+
+
+def check_fade(work: Path) -> None:
+    """The soft ending between tracks: a filter, never a rewrite.
+
+    mpv has no crossfade, so the fade is an audio filter built here and set
+    through the same `af` property as the loudness levelling.  What the suite
+    can pin without a real player is the graph, its clamping, the settings and
+    that the engine sets it once per track and never cuts a running fade.
+    """
+    from types import SimpleNamespace
+    from chat import fade, settings as registry
+    from chat.engine import Engine
+
+    check("no fade when the length is zero",
+          fade.filter_for(0, 200) == "", fade.filter_for(0, 200))
+    graph = fade.filter_for(3, 200)
+    check("the out-fade starts three seconds before the end",
+          "lavfi=[afade=t=out:st=197.000:d=3.000]" in graph, graph)
+    check("the next track eases in over 0.6 s",
+          "lavfi=[afade=t=in:st=0:d=0.600]" in graph, graph)
+    check("each fade is its own lavfi entry, so mpv parses no comma",
+          graph.count("lavfi=[") == 2 and graph.count(",") == 1, graph)
+    check("an interlude keeps its whole length",
+          "t=out" not in fade.filter_for(5, 2.0), fade.filter_for(5, 2.0))
+    check("an unknown length still fades the join in",
+          "t=in" in fade.filter_for(3, 0)
+          and "t=out" not in fade.filter_for(3, 0), fade.filter_for(3, 0))
+    check("a long fade is capped at a third of the track",
+          round(fade.length(10, 6), 3) == 2.0
+          and round(fade.start(10, 6), 3) == 4.0,
+          f"{fade.length(10, 6)} / {fade.start(10, 6)}")
+    check("the fade window is known",
+          fade.inside(3, 200, 198) and not fade.inside(3, 200, 100),
+          f"{fade.inside(3, 200, 198)} / {fade.inside(3, 200, 100)}")
+    check("the fade and the levelling share one af value",
+          fade.chain("lavfi=[x]", "volume=4.0dB") == "lavfi=[x],volume=4.0dB",
+          fade.chain("lavfi=[x]", "volume=4.0dB"))
+    check("no parts at all means an untouched track",
+          fade.chain("", "") == "", repr(fade.chain("", "")))
+
+    def profile(**stored):
+        return SimpleNamespace(
+            setting=lambda key, default=None: stored.get(key, default))
+
+    check("the settings give the fade length",
+          fade.seconds_from(profile(fade_songs=True, fade_seconds=4.5)) == 4.5,
+          str(fade.seconds_from(profile(fade_songs=True, fade_seconds=4.5))))
+    check("switched off means no fade at all",
+          fade.seconds_from(profile(fade_songs=False, fade_seconds=5)) == 0.0,
+          str(fade.seconds_from(profile(fade_songs=False, fade_seconds=5))))
+    check("an insane length is clamped",
+          fade.seconds_from(profile(fade_songs=True, fade_seconds=99)) == 10.0,
+          str(fade.seconds_from(profile(fade_songs=True, fade_seconds=99))))
+    check("the default is three seconds",
+          fade.seconds_from(profile()) == fade.DEFAULT_SECONDS,
+          str(fade.seconds_from(profile())))
+
+    class FakeFadePlayer:
+        def __init__(self):
+            self.filters: list[str] = []
+            self.ok = True
+
+        def running(self):
+            return True
+
+        def set_audio_filter(self, value):
+            self.filters.append(value)
+            return self.ok, ""
+
+    stored = {"fade_songs": True, "fade_seconds": 4,
+              "loudness_level": "off"}
+
+    def engine_for(player):
+        track = SimpleNamespace(duration_s=100.0)
+        catalog = SimpleNamespace(
+            track=lambda rel: track if rel == "A/track.mp3" else None)
+        return SimpleNamespace(
+            root=work, player=player, catalog=catalog,
+            _audio_filter=None, _filter_rel="", _fade_broken=False,
+            _track_duration=lambda rel, status=None: 100.0,
+            profile=SimpleNamespace(
+                setting=lambda key, default=None: stored.get(key, default)))
+
+    player = FakeFadePlayer()
+    engine = engine_for(player)
+    Engine._apply_audio_filter(engine, "A/track.mp3",
+                               {"time": 10.0, "duration": 100.0})
+    check("the engine applies the fade to mpv",
+          len(player.filters) == 1
+          and "afade=t=out:st=96.000:d=4.000" in player.filters[0],
+          str(player.filters))
+    Engine._apply_audio_filter(engine, "A/track.mp3",
+                               {"time": 12.0, "duration": 100.0})
+    check("the filter is set once per track", len(player.filters) == 1,
+          str(player.filters))
+
+    stored["fade_songs"] = False
+    Engine._apply_audio_filter(engine, "A/track.mp3",
+                               {"time": 40.0, "duration": 100.0})
+    check("switching the fading off removes it while playing",
+          player.filters[-1] == "", str(player.filters))
+
+    stored["fade_songs"] = True
+    stored["fade_seconds"] = 5
+    engine._filter_rel = "A/other.mp3"      # a change arrives mid-track
+    before = len(player.filters)
+    Engine._apply_audio_filter(engine, "A/track.mp3",
+                               {"time": 99.0, "duration": 100.0})
+    check("a fade is never dropped in during the last seconds",
+          len(player.filters) == before, str(player.filters))
+
+    broken = FakeFadePlayer()
+    broken.ok = False
+    engine = engine_for(broken)
+    Engine._apply_audio_filter(engine, "A/track.mp3",
+                               {"time": 1.0, "duration": 100.0})
+    check("an mpv without the fade filter keeps the track playable",
+          broken.filters and broken.filters[-1] == ""
+          and engine._fade_broken is True, str(broken.filters))
+
+    for sentence, key, value in (
+            ("turn the fading off", "fade_songs", False),
+            ("enable soft endings", "fade_songs", True),
+            ("set the fade length to 6", "fade_seconds", 6),
+            ("schalte das ausblenden aus", "fade_songs", False)):
+        plan = registry.parse(sentence) or {}
+        check(f"“{sentence}” is a fade setting",
+              plan.get("key") == key and plan.get("value") == value, str(plan))
+    plan = registry.parse("fade the songs out over 5 seconds") or {}
+    check("a length in the sentence switches the fading on",
+          plan.get("key") == "fade_songs" and plan.get("value") is True
+          and (plan.get("also") or {}).get("fade_seconds") == 5, str(plan))
+    plan = registry.parse("how long is the fade") or {}
+    check("asking for the fade length shows the length",
+          plan.get("action") == "show" and plan.get("key") == "fade_seconds",
+          str(plan))
+    plan = registry.parse("is the fading on?") or {}
+    check("asking whether the fading is on shows the switch",
+          plan.get("action") == "show" and plan.get("key") == "fade_songs",
+          str(plan))
+    check("a mood blend is not a fade setting",
+          registry.parse("play a blend of jazz and chill") is None,
+          str(registry.parse("play a blend of jazz and chill")))
+    check("a title with the word fade stays playback",
+          registry.parse("play Fade Out") is None,
+          str(registry.parse("play Fade Out")))
+
+    from chat import nlu
+
+    def planned(sentence):
+        return nlu.plan(sentence, nlu.Context(), SimpleNamespace())
+
+    for sentence, key in (("turn the fading off", "fade_songs"),
+                          ("set the fade length to 6", "fade_seconds")):
+        plan = planned(sentence)
+        check(f"“{sentence}” reaches the settings skill",
+              plan is not None and plan.skill == "settings"
+              and plan.args.get("key") == key, str(plan))
+    plan = planned("play a blend of jazz and chill")
+    check("a mood blend stays playback in the planner",
+          plan is not None and plan.skill == "play-music", str(plan))
+    plan = planned("play Fade Out")
+    check("a fade title stays playback in the planner",
+          plan is not None and plan.skill == "play-music", str(plan))
+
+    # a switch in the settings panel must not wait for the status poll
+    applied: list[tuple] = []
+    switcher = SimpleNamespace(
+        profile=SimpleNamespace(setting=lambda *a, **k: None),
+        llm=SimpleNamespace(),
+        _last_rel="A/track.mp3", _last_pos=5.0, _last_duration=100.0,
+        _apply_audio_filter=lambda rel, status=None: applied.append(
+            (rel, status)))
+    Engine._settings_applied(switcher, {"key": "fade_songs"})
+    check("switching the fading re-applies the filter at once",
+          len(applied) == 1 and applied[0][0] == "A/track.mp3"
+          and round(applied[0][1]["time"], 1) == 5.0, str(applied))
+    applied.clear()
+    Engine._settings_applied(switcher, {"key": "visualizer"})
+    check("another setting leaves the audio filter alone",
+          not applied, str(applied))
 
 
 def check_recent(work: Path) -> None:
@@ -7715,6 +7899,7 @@ def main() -> int:
         check_downloads(work)
         check_inventory_refresh(work)
         check_loudness(work)
+        check_fade(work)
         check_recent(work)
         check_health(work)
         check_duplicates(work)

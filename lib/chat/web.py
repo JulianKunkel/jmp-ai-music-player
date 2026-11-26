@@ -50,6 +50,7 @@ from .skills import ORDER, examples, help_markdown, load as load_skills
 from . import index_job
 from . import library_job
 from . import lyrics_job
+from . import fade
 from . import loudness
 from . import lrc
 from . import psycho_job
@@ -2061,6 +2062,7 @@ class ChatService:
                     "available": self.engine.psycho.available(),
                     "error": "no profile for this track yet",
                     "loudness": loudness.describe(self.engine.root, track.rel),
+                    "fade": fade.describe(self.engine.profile),
                 }
             families = self.engine.psycho.families()
             return {
@@ -2082,6 +2084,7 @@ class ChatService:
                 "families": families,
                 "available": True,
                 "loudness": loudness.describe(self.engine.root, track.rel),
+                "fade": fade.describe(self.engine.profile),
             }
 
     def psycho_explain(self, rel: str = "", set_name: str | None = None) -> dict:
