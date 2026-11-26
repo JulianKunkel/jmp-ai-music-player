@@ -103,6 +103,19 @@
   </branding>
 
   <releases>
+    <release version="1.2.13" date="2026-11-26">
+      <description>
+        <p>
+          The net diagram's neighbour list now follows the profile database
+          instead of the moment the window started.  The measured axes were
+          read once and kept for the life of the process, so a track that the
+          app's own measurement job had just written showed its values but
+          "No other track has a profile yet." underneath.  The axes, the sound
+          families and the undecodable rows are refreshed as soon as the
+          database changes.
+        </p>
+      </description>
+    </release>
     <release version="1.2.12" date="2026-11-26">
       <description>
         <p>

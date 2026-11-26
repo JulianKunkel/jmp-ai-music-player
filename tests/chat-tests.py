@@ -2768,6 +2768,34 @@ def check_explain(work: Path) -> None:
     # -- and nothing was written -------------------------------------------
     check("the explanation changed no file", before == snapshot(),
           str(sorted(set(before.items()) ^ set(snapshot().items()))[:3]))
+
+    # -- the cache follows the database, not the process -------------------
+    # last, because it writes a row: the app's own measurement job does that
+    # while the window is open.  The axes map used to be loaded once, so a
+    # freshly measured track stayed missing from it and the net diagram's
+    # neighbour list said "no other track has a profile yet" for a track that
+    # had just been measured.
+    timbre_before = psycho.load_axes("timbre")
+    check("the timbre axes are loaded and cached", rel in timbre_before,
+          str(len(timbre_before)))
+    newcomer = "Artists/Eisenwerk/Album/05.mp3"
+    conn = sqlite3.connect(folder / "features.db")
+    conn.execute(
+        "INSERT INTO profile_set(rel_path, set_name, axes, estimated, "
+        "updated_at) VALUES(?, 'timbre', ?, 0, '')",
+        (newcomer, json.dumps({axis: 0.6 for axis in SET_AXES["timbre"]})))
+    conn.execute("INSERT INTO profile(rel_path, family) VALUES(?, 'Fresh')",
+                 (newcomer,))
+    conn.commit()
+    conn.close()
+    timbre_after = psycho.load_axes("timbre")
+    check("a row written after the cache was built is seen at once",
+          newcomer in timbre_after
+          and newcomer not in timbre_before,
+          str(sorted(set(timbre_after) - set(timbre_before))))
+    check("the family map follows the database too",
+          psycho.load_family().get(newcomer) == "Fresh",
+          str(psycho.load_family().get(newcomer)))
     shutil.rmtree(lib, ignore_errors=True)
 
 

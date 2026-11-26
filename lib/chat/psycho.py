@@ -654,6 +654,8 @@ class Psycho:
         self._families: dict[str, str] | None = None
         self._silent_cache: set[str] | None = None
         self._loaded: set[str] = set()
+        #: the (main, WAL) size/mtime pair the caches were built from
+        self._cached_stamp: tuple | None = None
 
     # -- internals ---------------------------------------------------------
 
@@ -852,7 +854,15 @@ class Psycho:
 
     def load_axes(self, set_name: str | None = None
                   ) -> dict[str, dict[str, float]]:
-        """All profiles of one set in memory; cached per set."""
+        """All profiles of one set in memory; cached per set.
+
+        The cache is keyed by the database stamp, so a measurement that writes
+        a new row is seen at once — without that, the app's own job added a
+        track to `profile_set` while the running process kept the old map, and
+        `similar()` (the net diagram's neighbour list) answered "no other track
+        has a profile yet" for a track that had just been measured.
+        """
+        self._refresh()
         set_name = set_key(set_name)
         if set_name in self._loaded:
             return self._axes.get(set_name, {})
@@ -930,6 +940,7 @@ class Psycho:
 
     def load_family(self) -> dict[str, str]:
         """rel_path -> family label, cached like ``load_axes``."""
+        self._refresh()
         if self._families is not None:
             return self._families
         conn = self._connect()
@@ -951,6 +962,26 @@ class Psycho:
         self._axes = {}
         self._families = None
         self._silent_cache = None
+
+    def _db_stamp(self) -> tuple:
+        """The database file and its WAL as (size, mtime) — a write moves one."""
+        out = []
+        for suffix in ("", "-wal"):
+            try:
+                info = Path(str(self.path) + suffix).stat()
+            except OSError:
+                out.append((0, 0))
+            else:
+                out.append((info.st_size, info.st_mtime_ns))
+        return tuple(out)
+
+    def _refresh(self) -> None:
+        """Drop the cached maps when the database changed under them."""
+        stamp = self._db_stamp()
+        if stamp == self._cached_stamp:
+            return
+        self._cached_stamp = stamp
+        self.invalidate()
 
     # -- similarity --------------------------------------------------------
 
@@ -1015,6 +1046,7 @@ class Psycho:
 
     def _silent(self) -> set[str]:
         """Rows whose audio could not be decoded, so every axis is meaningless."""
+        self._refresh()
         if self._silent_cache is not None:
             return self._silent_cache
         conn = self._connect()

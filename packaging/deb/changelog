@@ -1,3 +1,17 @@
+jmp-ai-music-player (1.2.13-1) unstable; urgency=medium
+
+  * The net diagram's neighbour list follows the profile database instead of
+    the process start.  The measured axes were loaded once and cached for the
+    life of the window, so a track the app's own measurement job had just
+    written was invisible to it: opening Profile on it showed its values but
+    "No other track has a profile yet." for the neighbours.  The axes map, the
+    family map and the silent-row set are now dropped whenever `features.db`
+    (or its `-wal`) changed.
+  * No tag, playlist, journal or audio file is written; nothing changes on
+    disk apart from the profile database the analyser already owns.
+
+ -- Julian Kunkel <julian@kunkel.de>  Thu, 26 Nov 2026 23:20:00 +0100
+
 jmp-ai-music-player (1.2.12-1) unstable; urgency=medium
 
   * The Profile panel no longer dead-ends on a track that has no profile yet.
