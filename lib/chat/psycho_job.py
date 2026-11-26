@@ -79,9 +79,27 @@ def _number(text: str) -> int:
 # the database tells us whether there is anything to do
 
 
-#: the last counts() answer, keyed by the database stamp.  Three aggregate
-#: queries over 13k rows cost ~15 ms and the footer asks every few seconds.
+#: the last counts() answer, keyed by the database stamp, the inventory stamp
+#: and the measurable count.  Three aggregate queries over 13k rows cost
+#: ~15 ms and the footer asks every few seconds.
 _COUNTS: dict[tuple, dict] = {}
+
+#: the formats `scripts/psycho_features.py` can read (`AUDIO_EXT` there).  A
+#: chiptune has no such extension, so it can never get a profile.
+MEASURABLE_EXT = {".mp3", ".mp2", ".m4a", ".opus", ".ogg", ".flac", ".wav",
+                  ".webm"}
+
+#: how many files in the live inventory could be measured, keyed by the
+#: inventory stamp alone — the 13k stat() calls happen once per index change,
+#: not once per poll (the database stamp moves while a job writes).
+_KNOWN: dict[tuple, frozenset] = {}
+
+#: how many of those have no row yet, with the time it was worked out.  The
+#: set difference costs ~120 ms (13k paths out of SQLite), so a positive answer
+#: is refreshed at most every `UNMEASURED_TTL` seconds; a zero is final until
+#: the inventory changes, which keeps a finished library free.
+_UNMEASURED: dict[tuple, tuple[float, int]] = {}
+UNMEASURED_TTL = 30.0
 
 
 def _stamp(path: Path) -> tuple:
@@ -92,46 +110,150 @@ def _stamp(path: Path) -> tuple:
     return (str(path), info.st_size, info.st_mtime_ns)
 
 
+def inventory_path(root: Path) -> Path:
+    return Path(root) / "library-work" / "inventory" / "files.jsonl"
+
+
+def _library_rel(path: str) -> str:
+    text = str(path or "").replace("\\", "/").lstrip("/")
+    return text[len("Music/"):] if text.startswith("Music/") else text
+
+
+def measurable(root: Path) -> frozenset[str]:
+    """The library-relative paths the analyser could measure right now.
+
+    `counts()` only knows the rows already in the database, so a track that
+    arrived after the last run (a fresh import) is invisible to it and the
+    footer offered nothing to do.  This walks the inventory the same way
+    `psycho_features.py` does — a readable format that is still on disk.
+    """
+    root = Path(root)
+    path = inventory_path(root)
+    stamp = _stamp(path)
+    cached = _KNOWN.get(stamp)
+    if cached is not None:
+        return cached
+    found: set[str] = set()
+    if path.is_file():
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            raw = b""
+        for line in raw.split(b"\n"):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if (row.get("ext") or "").lower() not in MEASURABLE_EXT:
+                continue
+            rel = _library_rel(row.get("rel_path"))
+            if rel and (root / rel).is_file():
+                found.add(rel)
+    answer = frozenset(found)
+    _KNOWN.clear()
+    _KNOWN[stamp] = answer
+    return answer
+
+
+def known(root: Path) -> int:
+    """How many files the analyser could measure (see :func:`measurable`)."""
+    return len(measurable(root))
+
+
+def _unmeasured(root: Path, paths: frozenset, db_stamp: tuple) -> int:
+    """How many measurable files have no row in the database yet.
+
+    The set difference is ~120 ms on this library, so it is not recomputed on
+    every poll: a zero is final until the inventory or the database changes
+    (a finished job moves the database stamp), while a positive answer is
+    refreshed at most every `UNMEASURED_TTL` seconds — a job that is running
+    has already moved the stamp, so the count drops as soon as it writes.
+    """
+    key = (_stamp(inventory_path(root)), db_stamp, len(paths))
+    now = time.monotonic()
+    cached = _UNMEASURED.get(key)
+    if cached is not None:
+        when, value = cached
+        if value == 0 or now - when < UNMEASURED_TTL:
+            return value
+    value = len(paths)
+    if paths:
+        path = db_path(root)
+        if path.is_file():
+            try:
+                import sqlite3
+                conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+                try:
+                    have = {item[0] for item in
+                            conn.execute("SELECT rel_path FROM audio")}
+                    value = len(paths - have)
+                finally:
+                    conn.close()
+            except Exception:            # a locked DB must not invent work
+                value = 0
+    if len(_UNMEASURED) > 8:
+        _UNMEASURED.clear()
+    _UNMEASURED[key] = (now, value)
+    return value
+
+
 def counts(root: Path) -> dict:
-    """Rows in the profile database, read-only and tolerant of a missing DB."""
+    """Rows in the profile database, read-only and tolerant of a missing DB.
+
+    `known` is how many files the library *could* measure (see :func:`known`)
+    and `unmeasured` how many of them have no row yet — the count a freshly
+    imported track adds, which the row totals alone cannot show.  Rows for
+    files that are gone from the tree are not work, so the two sets are
+    compared instead of the counts.
+    """
     result = {"total": 0, "measured": 0, "detailed": 0, "profiles": 0,
-              "families": 0, "failed": 0, "measured_at": "", "exists": False}
+              "families": 0, "failed": 0, "measured_at": "", "exists": False,
+              "known": 0, "unmeasured": 0}
     path = db_path(root)
-    stamp = (_stamp(path), _stamp(Path(str(path) + "-wal")))
+    paths = measurable(root)
+    result["known"] = len(paths)
+    db_stamp = (_stamp(path), _stamp(Path(str(path) + "-wal")))
+    stamp = (db_stamp, _stamp(inventory_path(root)), len(paths))
     cached = _COUNTS.get(stamp)
     if cached is not None:
-        return dict(cached)
-    if not path.is_file():
+        result = dict(cached)
+    elif not path.is_file():
         _COUNTS.clear()
         _COUNTS[stamp] = dict(result)
-        return result
-    try:
-        import sqlite3
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    else:
         try:
-            row = conn.execute(
-                "SELECT COUNT(*) AS n, "
-                "SUM(CASE WHEN source='analysis' THEN 1 ELSE 0 END) AS measured, "
-                "SUM(CASE WHEN lufs IS NOT NULL AND sharpness_acum IS NOT NULL "
-                "THEN 1 ELSE 0 END) AS detailed, "
-                "SUM(CASE WHEN source='analysis' AND lufs IS NULL "
-                "THEN 1 ELSE 0 END) AS failed "
-                "FROM audio").fetchone()
-            result.update(total=row[0] or 0, measured=row[1] or 0,
-                          detailed=row[2] or 0, failed=row[3] or 0, exists=True)
-            result["profiles"] = conn.execute(
-                "SELECT COUNT(*) FROM profile").fetchone()[0] or 0
-            result["families"] = conn.execute(
-                "SELECT COUNT(*) FROM family").fetchone()[0] or 0
-            meta = conn.execute(
-                "SELECT value FROM meta WHERE key='measured_at'").fetchone()
-            result["measured_at"] = (meta[0] if meta else "") or ""
-        finally:
-            conn.close()
-    except Exception:                   # a locked or older DB is not an error
-        pass
-    _COUNTS.clear()
-    _COUNTS[stamp] = dict(result)
+            import sqlite3
+            conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            try:
+                row = conn.execute(
+                    "SELECT COUNT(*) AS n, "
+                    "SUM(CASE WHEN source='analysis' THEN 1 ELSE 0 END) "
+                    "AS measured, "
+                    "SUM(CASE WHEN lufs IS NOT NULL AND sharpness_acum IS NOT "
+                    "NULL THEN 1 ELSE 0 END) AS detailed, "
+                    "SUM(CASE WHEN source='analysis' AND lufs IS NULL "
+                    "THEN 1 ELSE 0 END) AS failed "
+                    "FROM audio").fetchone()
+                result.update(total=row[0] or 0, measured=row[1] or 0,
+                              detailed=row[2] or 0, failed=row[3] or 0,
+                              exists=True)
+                result["profiles"] = conn.execute(
+                    "SELECT COUNT(*) FROM profile").fetchone()[0] or 0
+                result["families"] = conn.execute(
+                    "SELECT COUNT(*) FROM family").fetchone()[0] or 0
+                meta = conn.execute(
+                    "SELECT value FROM meta WHERE key='measured_at'").fetchone()
+                result["measured_at"] = (meta[0] if meta else "") or ""
+            finally:
+                conn.close()
+        except Exception:               # a locked or older DB is not an error
+            pass
+        _COUNTS.clear()
+        _COUNTS[stamp] = dict(result)
+    result["unmeasured"] = _unmeasured(root, paths, db_stamp)
     return result
 
 
@@ -142,10 +264,17 @@ def needed(root: Path) -> str:
     stores such a row with `source='analysis'` and empty measurements, so a
     second pass would fail on exactly the same files.  Those stay visible in
     :func:`counts` as `failed`, and the job does not start for them alone.
+
+    A file with **no row at all** is work: that is a track imported after the
+    last run, and the row totals alone would never show it.
     """
     if not available(root):
         return "the library has no scripts/psycho_features.py"
     state = counts(root)
+    if state.get("unmeasured"):
+        missing = int(state["unmeasured"])
+        return (f"{missing:,} track has never been measured" if missing == 1
+                else f"{missing:,} tracks have never been measured")
     if not state["exists"]:
         return "there is no profile database yet"
     if state["measured"] < state["total"]:

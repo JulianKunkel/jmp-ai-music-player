@@ -1476,7 +1476,10 @@ class ChatService:
                 state = str(status.get("state") or "idle")
                 active = state in {"running", "paused"}
                 done = int(counts.get("measured") or 0)
-                total = int(counts.get("total") or 0)
+                # a track imported after the last run has no row yet, so the
+                # inventory count is the honest denominator (13,199 of 13,200)
+                total = max(int(counts.get("total") or 0),
+                            int(counts.get("known") or 0))
                 # the reason a finished-looking database still has work to do
                 missing = psycho_job.needed(self.root)
                 jobs.append({
@@ -2160,6 +2163,13 @@ class ChatService:
                 return {"error": "no track selected", "set": set_name,
                         "sets": sets, "axes": self._psycho_axes(set_name)}
             record = self.engine.psycho.describe(track.rel, set_name)
+            if record is not None and not any(
+                    value is not None
+                    for value in (record.get("axes") or {}).values()):
+                # an audio row whose decode failed (every measurement NULL)
+                # would draw an empty net with no explanation — treat it as
+                # "no profile", so the panel names the gap and its reason
+                record = None
             from .psycho import RAW, SETS
             state = self.engine.track_state(track.rel, record)
             if record is None and state.get("profile") and set_name != "psychology":
@@ -2172,6 +2182,8 @@ class ChatService:
                                     f"this track yet. "
                                     + state.get("summary", "")).strip()
             if record is None:
+                # whether a measurement could fill this gap, and why not
+                hint = self.engine.psycho.measure_hint(track.rel)
                 return {
                     "rel": track.rel, "title": track.name,
                     "artist": track.who, "album": track.album,
@@ -2184,6 +2196,10 @@ class ChatService:
                     # what *this* file still lacks, so the panel can say that
                     # instead of only quoting the library-wide counts
                     "track_state": state,
+                    # the panel offers "Measure this track" only when a run
+                    # can really produce a profile (a broken rip cannot)
+                    "can_measure": bool(hint.get("measurable")),
+                    "measure_reason": str(hint.get("reason") or ""),
                     "loudness": loudness.describe(self.engine.root, track.rel),
                     "fade": fade.describe(self.engine.profile),
                 }

@@ -1,3 +1,27 @@
+jmp-ai-music-player (1.2.12-1) unstable; urgency=medium
+
+  * The Profile panel no longer dead-ends on a track that has no profile yet.
+    It now offers "Measure this track" whenever a measurement could really
+    produce one, and starts the library's existing background analyser
+    (`psycho_features.py` then `psycho_profile.py`).  No new measurement mode
+    was added, and the job writes only the profile database, the generated
+    `Playlists/Psycho/` lists and their reports — never the audio.
+  * `psycho_job.needed()` now compares the live inventory against the database,
+    so a file that arrived after the last run counts as work: the footer's
+    profiles chip reads "13,199 / 13,200 · 1 track has never been measured"
+    instead of hiding itself, and Settings → Sound profile is no longer stuck
+    on "everything measured".  A finished library still shows no chip.
+  * A track that cannot be measured says why instead of leaving the missing
+    button unexplained: a failed decode ("the audio could not be decoded"),
+    a format the analyser never reads (SPC, SID, tracker modules), or a
+    profile whose axes have not been built yet.
+  * An audio row whose decode failed (every axis NULL) is treated as "no
+    profile", so the net diagram is no longer drawn empty without an
+    explanation.
+  * No tag, playlist, journal or audio file is written.
+
+ -- Julian Kunkel <julian@kunkel.de>  Thu, 26 Nov 2026 18:50:00 +0100
+
 jmp-ai-music-player (1.2.11-1) unstable; urgency=medium
 
   * The release is shown once: the chat greeting no longer repeats the build

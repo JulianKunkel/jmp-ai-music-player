@@ -1223,6 +1223,41 @@ def check_work(work: Path) -> None:
           psycho_job.needed(done_lib) == "",
           repr(psycho_job.needed(done_lib)))
 
+    # a track imported after the last run has no row at all, so the row totals
+    # alone never show it — the inventory does, and that is what makes the
+    # footer chip (and the panel's "Measure this track") appear
+    (done_lib / "library-work" / "inventory").mkdir(parents=True, exist_ok=True)
+    (done_lib / "A").mkdir(parents=True, exist_ok=True)
+    (done_lib / "A" / "new.mp3").write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00")
+    with (done_lib / "library-work" / "inventory" / "files.jsonl").open(
+            "w", encoding="utf-8") as handle:
+        handle.write(json.dumps({
+            "rel_path": "A/new.mp3", "ext": ".mp3",
+            "title": "New", "artist": "A", "album": "A"}) + "\n")
+        # a chiptune is in the inventory but can never be measured
+        handle.write(json.dumps({
+            "rel_path": "A/game.spc", "ext": ".spc",
+            "title": "Game", "artist": "C64", "album": "Game"}) + "\n")
+    (done_lib / "A" / "game.spc").write_bytes(b"SNES-SPC700")
+    fresh = psycho_job.counts(done_lib)
+    check("a new file is counted although it has no row",
+          fresh["known"] == 1 and fresh["unmeasured"] == 1, str(fresh))
+    check("an unmeasured file is offered as work",
+          psycho_job.needed(done_lib) == "1 track has never been measured",
+          repr(psycho_job.needed(done_lib)))
+    conn = sqlite3.connect(done_lib / "library-work" / "app" / "psycho" /
+                           "features.db")
+    conn.execute("INSERT INTO audio VALUES ('A/new.mp3', 'analysis', -12.0, 1.0)")
+    conn.execute("INSERT INTO profile VALUES ('A/new.mp3')")
+    conn.commit()
+    conn.close()
+    psycho_job._KNOWN.clear()
+    psycho_job._COUNTS.clear()
+    psycho_job._UNMEASURED.clear()
+    check("once it is measured the work is done again",
+          psycho_job.needed(done_lib) == "",
+          repr(psycho_job.needed(done_lib)))
+
 
 def check_inventory_refresh(work: Path) -> None:
     """An index run must re-read only the files whose size or mtime moved."""
@@ -4691,6 +4726,29 @@ def check_track_state(work: Path) -> None:
               data.get("error") == "no profile for this track yet"
               and (data.get("track_state") or {}).get("missing")
               == ["profile", "lyrics"], str(data.get("track_state")))
+        # a file with no row can be measured from the panel; one that cannot
+        # says why, so a missing button is never unexplained
+        check("an unmeasured track offers the measurement",
+              data.get("can_measure") is True
+              and "arrived after" in str(data.get("measure_reason")), str(data))
+        broken = "Artists/Nobody/Unmeasured/02_broken.mp3"
+        (lib / broken).write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00")
+        conn = sqlite3.connect(lib / "library-work" / "app" / "psycho"
+                               / "features.db")
+        conn.execute("INSERT INTO audio(rel_path, source) VALUES(?, 'analysis')",
+                     (broken,))
+        conn.commit()
+        conn.close()
+        data = service.psycho(broken)
+        check("a file that could not be decoded offers no measurement",
+              data.get("can_measure") is False
+              and "could not be decoded" in str(data.get("measure_reason")),
+              str(data.get("measure_reason")))
+        check("a chiptune is never offered for measuring",
+              engine.psycho.measure_hint("Chiptune/SPC/x.spc")["measurable"]
+              is False
+              and "cannot be measured" in
+              engine.psycho.measure_hint("Chiptune/SPC/x.spc")["reason"], "")
         data = service.lyrics(unknown)
         check("/api/lyrics carries the track state when no lines exist",
               data.get("available") is False

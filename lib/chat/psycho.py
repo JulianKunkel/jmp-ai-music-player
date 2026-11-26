@@ -680,6 +680,53 @@ class Psycho:
 
     # -- reading -----------------------------------------------------------
 
+    #: the formats `scripts/psycho_features.py` reads (`AUDIO_EXT` there).  A
+    #: chiptune has no such extension, so it can never be measured and no
+    #: button is offered for it.
+    MEASURABLE = {".mp3", ".mp2", ".m4a", ".opus", ".ogg", ".flac", ".wav",
+                  ".webm"}
+
+    def measure_hint(self, rel: str) -> dict:
+        """Why this track has no profile — and whether measuring would fix it.
+
+        Read-only, one row lookup.  ``measurable`` decides whether the profile
+        panel offers "Measure this track"; ``reason`` is the sentence behind
+        the note's tooltip, so a track that cannot be measured says why
+        instead of looking like a missing button.
+        """
+        suffix = Path(str(rel or "")).suffix.lower()
+        result = {"measurable": suffix in self.MEASURABLE,
+                  "row": False, "failed": False, "reason": ""}
+        if not result["measurable"]:
+            result["reason"] = ("this format cannot be measured — the analyser "
+                                "reads MP3, MP2, M4A, Opus, Ogg, FLAC, WAV and "
+                                "WebM")
+            return result
+        conn = self._connect()
+        if conn is None:
+            result["reason"] = "there is no profile database yet"
+            return result
+        try:
+            row = conn.execute("SELECT lufs FROM audio WHERE rel_path = ?",
+                               (rel,)).fetchone()
+        except sqlite3.Error:
+            row = None
+        finally:
+            conn.close()
+        if row is None:
+            result["reason"] = "this file arrived after the last measurement"
+            return result
+        result["row"] = True
+        if row["lufs"] is None:
+            result["failed"] = True
+            result["measurable"] = False
+            result["reason"] = ("the audio could not be decoded, so it cannot "
+                                "be measured")
+        else:
+            result["reason"] = ("it was measured, but the profile axes have "
+                                "not been built for it yet")
+        return result
+
     def describe(self, rel: str, set_name: str | None = None) -> dict | None:
         """Everything the app shows for one track, or None when unknown.
 

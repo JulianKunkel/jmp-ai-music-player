@@ -103,6 +103,22 @@
   </branding>
 
   <releases>
+    <release version="1.2.12" date="2026-11-26">
+      <description>
+        <p>
+          The Profile panel no longer dead-ends on a track that has no profile
+          yet: it offers "Measure this track" and starts the library's existing
+          background analyser, which writes only the profile database and never
+          the audio.  A track that cannot be measured says why instead — a
+          failed decode or a format the analyser does not read.
+        </p>
+        <p>
+          The job now notices a file that arrived after the last run, so the
+          footer chip and Settings → Sound profile offer the measurement
+          instead of reporting that everything is done.
+        </p>
+      </description>
+    </release>
     <release version="1.2.11" date="2026-11-26">
       <description>
         <p>
